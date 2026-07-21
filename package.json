@@ -1,0 +1,22 @@
+{
+  "name": "repro-asp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Repro: an autonomous Software Services ASP that reproduces real software bugs, captures verified evidence, and generates developer-ready regression tests.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node --check src/server.js && node --check src/analyzer.js && node --check src/urlSafety.js && node --check src/report.js && node --check src/payment.js"
+  },
+  "dependencies": {
+    "@okxweb3/x402-core": "^0.1.0",
+    "@okxweb3/x402-evm": "^0.2.1",
+    "@okxweb3/x402-express": "^0.1.1",
+    "express": "^5.2.1",
+    "playwright": "^1.54.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
