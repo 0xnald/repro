@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Repro | Verified Bug Reproduction</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Repro home">
+        <img src="/assets/repro-mark.png" alt="" class="brand-mark">
+        <span>Repro</span>
+      </a>
+      <nav class="nav">
+        <a href="/health" target="_blank" rel="noreferrer">Health</a>
+        <a href="https://github.com/0xnald/repro" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <main class="shell">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Verified Bug Reproduction ASP</p>
+          <h1>From bug report to verified repro in minutes.</h1>
+          <p class="lede">Repro runs a real browser session, captures evidence, and returns a developer-ready regression test.</p>
+        </div>
+        <div class="hero-card" aria-hidden="true">
+          <img src="/assets/repro-mark.png" alt="" class="hero-mark">
+          <div class="signal-list">
+            <span>Browser evidence</span>
+            <span>Console and network logs</span>
+            <span>Playwright test</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <form id="repro-form" class="panel input-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Run</p>
+              <h2>Reproduce a bug</h2>
+            </div>
+            <span id="payment-pill" class="pill">Checking</span>
+          </div>
+
+          <label>
+            Website or app URL
+            <input id="url" name="url" type="url" value="https://proovra.xyz" required>
+          </label>
+
+          <label>
+            Bug report
+            <textarea id="bugReport" name="bugReport" rows="5" required>The website should load cleanly without console errors or failed requests.</textarea>
+          </label>
+
+          <label>
+            Expected behavior
+            <textarea id="expectedBehavior" name="expectedBehavior" rows="3">The page loads and remains stable with no browser runtime errors.</textarea>
+          </label>
+
+          <fieldset>
+            <legend>Viewport</legend>
+            <div class="segmented" role="radiogroup" aria-label="Viewport">
+              <label><input type="radio" name="viewport" value="desktop" checked><span>Desktop</span></label>
+              <label><input type="radio" name="viewport" value="mobile"><span>Mobile</span></label>
+              <label><input type="radio" name="viewport" value="both"><span>Both</span></label>
+            </div>
+          </fieldset>
+
+          <details>
+            <summary>Optional login and test data</summary>
+            <div class="grid two">
+              <label>
+                Username or email
+                <input id="username" name="username" autocomplete="username">
+              </label>
+              <label>
+                Password
+                <input id="password" name="password" type="password" autocomplete="current-password">
+              </label>
+            </div>
+            <label>
+              Test data JSON
+              <textarea id="testData" name="testData" rows="4" placeholder='{"email":"qa@example.com","name":"QA Test"}'></textarea>
+            </label>
+          </details>
+
+          <button id="run-button" class="primary" type="submit">
+            <span class="button-icon" aria-hidden="true">&gt;</span>
+            <span id="run-label">Run Repro</span>
+          </button>
+        </form>
+
+        <section class="panel result-panel" aria-live="polite">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Package</p>
+              <h2>Verified evidence</h2>
+            </div>
+            <span id="status-pill" class="pill neutral">Idle</span>
+          </div>
+
+          <div id="empty-state" class="empty">
+            <img src="/assets/repro-mark.png" alt="" class="empty-mark">
+            <p>Run a real URL to produce a verified reproduction package.</p>
+          </div>
+
+          <div id="results" class="results hidden">
+            <div class="metrics">
+              <div>
+                <span>Reproduced</span>
+                <strong id="metric-reproduced">-</strong>
+              </div>
+              <div>
+                <span>Confidence</span>
+                <strong id="metric-confidence">-</strong>
+              </div>
+              <div>
+                <span>Severity</span>
+                <strong id="metric-severity">-</strong>
+              </div>
+            </div>
+
+            <article class="summary-box">
+              <h3>Summary</h3>
+              <p id="summary"></p>
+            </article>
+
+            <div class="tabs" role="tablist" aria-label="Report views">
+              <button type="button" class="tab active" data-tab="evidence">Evidence</button>
+              <button type="button" class="tab" data-tab="steps">Steps</button>
+              <button type="button" class="tab" data-tab="logs">Logs</button>
+              <button type="button" class="tab" data-tab="test">Test</button>
+            </div>
+
+            <section id="tab-evidence" class="tab-panel">
+              <div id="screenshots" class="screenshots"></div>
+              <dl class="detail-list">
+                <div><dt>Final URL</dt><dd id="final-url">-</dd></div>
+                <div><dt>Page title</dt><dd id="page-title">-</dd></div>
+                <div><dt>Likely cause</dt><dd id="likely-cause">-</dd></div>
+              </dl>
+            </section>
+
+            <section id="tab-steps" class="tab-panel hidden">
+              <ol id="steps-list" class="steps-list"></ol>
+            </section>
+
+            <section id="tab-logs" class="tab-panel hidden">
+              <div class="log-grid">
+                <div>
+                  <h3>Console errors</h3>
+                  <pre id="console-log"></pre>
+                </div>
+                <div>
+                  <h3>Failed requests</h3>
+                  <pre id="network-log"></pre>
+                </div>
+              </div>
+            </section>
+
+            <section id="tab-test" class="tab-panel hidden">
+              <div class="test-heading">
+                <h3>Regression test</h3>
+                <button type="button" id="copy-test" class="secondary">Copy</button>
+              </div>
+              <pre id="regression-test" class="code"></pre>
+            </section>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

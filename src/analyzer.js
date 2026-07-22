@@ -118,6 +118,10 @@ async function runViewport({ request, viewport, artifactRoot }) {
       jobId: path.basename(artifactRoot),
       artifactRoot,
       screenshots: [beforePath, afterPath],
+      screenshotUrls: [
+        `/artifacts/${path.basename(artifactRoot)}/${viewport.name}/before.png`,
+        `/artifacts/${path.basename(artifactRoot)}/${viewport.name}/after.png`
+      ],
       video: videoPath
     };
     const regressionTest = generateRegressionTest({ request, observations });

@@ -32,6 +32,7 @@ export function buildReport({ request, observations, artifacts, regressionTest }
       failedRequests,
       metadata: observations.metadata,
       screenshots: artifacts.screenshots,
+      screenshotUrls: artifacts.screenshotUrls || [],
       video: artifacts.video || null
     },
     likelyCause: likelyCause({ consoleErrors, failedRequests }),

@@ -1,11 +1,18 @@
 import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { reproduceBug } from "./analyzer.js";
 import { createPaymentMiddleware, paymentStatus } from "./payment.js";
 
 const port = Number(process.env.PORT || 8787);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.resolve(__dirname, "..", "public");
+const artifactDir = path.resolve(process.env.ARTIFACT_DIR || "./artifacts");
 const app = express();
 
 app.use(express.json({ limit: "1mb" }));
+app.use(express.static(publicDir));
+app.use("/artifacts", express.static(artifactDir));
 app.use((_, res, next) => {
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("access-control-allow-headers", "content-type, payment, payment-signature, x-payment");

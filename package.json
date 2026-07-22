@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check src/server.js && node --check src/analyzer.js && node --check src/urlSafety.js && node --check src/report.js && node --check src/payment.js"
+    "check": "node --check src/server.js && node --check src/analyzer.js && node --check src/urlSafety.js && node --check src/report.js && node --check src/payment.js && node --check public/app.js"
   },
   "dependencies": {
     "@okxweb3/x402-core": "^0.1.0",
