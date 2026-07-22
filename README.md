@@ -112,6 +112,6 @@ Use Railway with the included `Dockerfile`. Repro needs Playwright browser autom
 ## Required Real Inputs Before Launch
 
 - Public HTTPS deployment URL
-- A real app/website for the 90-second demo: `https://proovra.xyz`
+- A real user-provided app/website URL for each reproduction run
 - Optional test credentials for authenticated flows
 - OKX Developer Portal credentials for x402 settlement
