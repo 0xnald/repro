@@ -41,7 +41,8 @@ export function createPaymentMiddleware() {
     }
   };
 
-  return paymentMiddleware(routes, server, undefined, undefined, false);
+  const syncFacilitatorOnStart = process.env.X402_SYNC_ON_START !== "false";
+  return paymentMiddleware(routes, server, undefined, undefined, syncFacilitatorOnStart);
 }
 
 export function paymentStatus() {
