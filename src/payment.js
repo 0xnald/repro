@@ -41,7 +41,7 @@ export function createPaymentMiddleware() {
     }
   };
 
-  return paymentMiddleware(routes, server);
+  return paymentMiddleware(routes, server, undefined, undefined, false);
 }
 
 export function paymentStatus() {
