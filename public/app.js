@@ -16,13 +16,16 @@ const fields = {
 };
 
 let lastRegressionTest = "";
+let lastGithubIssue = "";
 
 init();
 
 async function init() {
   wireTabs();
   document.querySelector("#copy-test").addEventListener("click", copyRegressionTest);
+  document.querySelector("#copy-issue").addEventListener("click", copyGithubIssue);
   await loadHealth();
+  await loadHistory();
   form.addEventListener("submit", submitRepro);
 }
 
@@ -64,21 +67,42 @@ async function submitRepro(event) {
       return;
     }
 
-    const report = await response.json();
+    const responseBody = await response.json();
     if (!response.ok) {
       setStatus("Failed", "bad");
-      showError(report.error || "Repro failed.", report);
+      showError(responseBody.error || "Repro failed.", responseBody);
       return;
     }
 
+    const report = response.status === 202
+      ? await pollJob(responseBody.jobId)
+      : responseBody;
+
     renderReport(normalizeReport(report));
     setStatus(report.reproduced ? "Reproduced" : "No failure", report.reproduced ? "bad" : "good");
+    await loadHistory();
   } catch (error) {
     setStatus("Failed", "bad");
     showError(error.message || "Request failed.", null);
   } finally {
     setRunning(false);
   }
+}
+
+async function pollJob(jobId) {
+  if (!jobId) throw new Error("The server did not return a job id.");
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    const response = await fetch(`/v1/jobs/${jobId}`);
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.error || "Unable to read job status.");
+    setStatus(titleCase(job.status), job.status === "failed" ? "bad" : "warn");
+    if (job.status === "completed") return job.report;
+    if (job.status === "failed") {
+      throw new Error(job.error?.message || "Repro job failed.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+  throw new Error("Repro timed out while waiting for the job to finish.");
 }
 
 function buildPayload() {
@@ -135,6 +159,8 @@ function renderReport(report) {
 
   lastRegressionTest = report.regressionTest || "";
   document.querySelector("#regression-test").textContent = lastRegressionTest || "No regression test generated.";
+  lastGithubIssue = formatGithubIssue(report.githubIssue);
+  document.querySelector("#github-issue").textContent = lastGithubIssue || "No GitHub issue draft generated.";
 }
 
 function renderScreenshots(urls) {
@@ -198,7 +224,9 @@ function showError(message, details) {
   document.querySelector("#console-log").textContent = details ? JSON.stringify(details, null, 2) : message;
   document.querySelector("#network-log").textContent = "";
   lastRegressionTest = "";
+  lastGithubIssue = "";
   document.querySelector("#regression-test").textContent = "";
+  document.querySelector("#github-issue").textContent = "";
 }
 
 function wireTabs() {
@@ -224,6 +252,56 @@ async function copyRegressionTest() {
   }, 1200);
 }
 
+async function copyGithubIssue() {
+  if (!lastGithubIssue) return;
+  await navigator.clipboard.writeText(lastGithubIssue);
+  const button = document.querySelector("#copy-issue");
+  const original = button.textContent;
+  button.textContent = "Copied";
+  setTimeout(() => {
+    button.textContent = original;
+  }, 1200);
+}
+
+async function loadHistory() {
+  const list = document.querySelector("#history-list");
+  try {
+    const response = await fetch("/v1/jobs?limit=10");
+    const data = await response.json();
+    const jobs = data.jobs || [];
+    if (jobs.length === 0) {
+      list.innerHTML = "<p>No reproduction jobs yet.</p>";
+      return;
+    }
+    list.innerHTML = "";
+    for (const job of jobs) {
+      const item = document.createElement("div");
+      item.className = "history-item";
+      const status = document.createElement("span");
+      status.className = `pill ${job.status === "completed" ? "good" : job.status === "failed" ? "bad" : "warn"}`;
+      status.textContent = titleCase(job.status);
+      const url = document.createElement("div");
+      url.className = "history-url";
+      url.textContent = job.request?.url || job.id;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Open";
+      button.addEventListener("click", () => {
+        if (job.report) {
+          renderReport(normalizeReport(job.report));
+          setStatus(job.report.reproduced ? "Reproduced" : "No failure", job.report.reproduced ? "bad" : "good");
+        } else if (job.error) {
+          showError(job.error.message || "Job failed.", job.error);
+        }
+      });
+      item.append(status, url, button);
+      list.append(item);
+    }
+  } catch {
+    list.innerHTML = "<p>History is unavailable.</p>";
+  }
+}
+
 function setRunning(isRunning) {
   runButton.disabled = isRunning;
   runLabel.textContent = isRunning ? "Running real browser scan" : "Run Repro";
@@ -244,4 +322,9 @@ async function safeJson(response) {
 
 function titleCase(value) {
   return String(value).slice(0, 1).toUpperCase() + String(value).slice(1);
+}
+
+function formatGithubIssue(issue) {
+  if (!issue) return "";
+  return `${issue.title || "Repro verified bug report"}\n\n${issue.body || ""}`.trim();
 }

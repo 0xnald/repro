@@ -1,74 +1,168 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
-import { assertPublicHttpUrl } from "./urlSafety.js";
-import { buildReport } from "./report.js";
+import { getConfig } from "./config.js";
+import { OpenRouterReasoner } from "./openrouter.js";
+import { validateAndNormalizeRequest, isActionAllowed } from "./guardrails.js";
+import { publishArtifacts } from "./storage.js";
+import { SystemDownError } from "./errors.js";
 
 const desktop = { width: 1440, height: 1000 };
 const mobile = { width: 390, height: 844, isMobile: true };
 
-export async function reproduceBug(request) {
-  const safeUrl = await assertPublicHttpUrl(request.url);
-  const jobId = crypto.randomUUID();
-  const artifactRoot = path.resolve(process.env.ARTIFACT_DIR || "./artifacts", jobId);
+export async function reproduceBug(rawRequest, { jobId = crypto.randomUUID() } = {}) {
+  const config = getConfig();
+  const request = await validateAndNormalizeRequest(rawRequest, config);
+  const reasoner = new OpenRouterReasoner(config);
+  const artifactRoot = path.resolve(config.app.artifactDir, jobId);
   await fs.mkdir(artifactRoot, { recursive: true });
 
+  const startedAt = Date.now();
   const viewports = request.viewport === "both"
     ? [{ name: "desktop", options: desktop }, { name: "mobile", options: mobile }]
     : [{ name: request.viewport === "mobile" ? "mobile" : "desktop", options: request.viewport === "mobile" ? mobile : desktop }];
 
-  const allReports = [];
+  const reports = [];
   for (const viewport of viewports) {
-    allReports.push(await runViewport({ request: { ...request, url: safeUrl }, viewport, artifactRoot }));
+    reports.push(await runViewport({ request, viewport, artifactRoot, jobId, reasoner, config, startedAt }));
   }
 
-  if (allReports.length === 1) return allReports[0];
-
-  return {
-    product: "Repro",
-    service: "Verified Bug Reproduction",
-    generatedAt: new Date().toISOString(),
-    input: {
-      url: safeUrl,
-      bugReport: request.bugReport,
-      expectedBehavior: request.expectedBehavior || null,
-      viewport: "both"
-    },
-    reproduced: allReports.some((report) => report.reproduced),
-    confidence: Math.max(...allReports.map((report) => report.confidence)),
-    severity: mergeSeverity(allReports.map((report) => report.severity)),
-    reports: allReports
-  };
+  if (reports.length === 1) return reports[0];
+  return mergeViewportReports({ request, reports });
 }
 
-async function runViewport({ request, viewport, artifactRoot }) {
+async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, config, startedAt }) {
   const viewportDir = path.join(artifactRoot, viewport.name);
   await fs.mkdir(viewportDir, { recursive: true });
 
   const browser = await launchBrowser();
   const context = await newContextWithOptionalVideo(browser, viewport, viewportDir);
   const page = await context.newPage();
+  const state = createObservationState();
 
-  const observations = {
-    steps: [],
+  wirePageObservers(page, state);
+
+  try {
+    state.actionTrace.push({ type: "open", url: request.url, viewport: viewport.name, reason: "Start reproduction run" });
+    await page.goto(request.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+
+    state.title = await page.title();
+    state.finalUrl = page.url();
+    state.metadata = await collectMetadata(page);
+    const beforePath = path.join(viewportDir, "before.png");
+    await page.screenshot({ path: beforePath, fullPage: true });
+    state.screenshotPaths.push(beforePath);
+
+    for (let turn = 0; turn < config.scan.maxActions; turn += 1) {
+      enforceScanDeadline(startedAt, config);
+      const observation = await observePage(page, state);
+      const plan = await reasoner.plan({ request, observation });
+      state.plans.push(plan);
+
+      const actions = Array.isArray(plan.actions) ? plan.actions : [];
+      if (actions.length === 0) {
+        state.actionTrace.push({ type: "stop", reason: "Planner returned no further actions" });
+        break;
+      }
+
+      let executed = false;
+      for (const action of actions.slice(0, 3)) {
+        if (!isActionAllowed(action, config)) {
+          state.actionTrace.push({ ...action, skipped: true, reason: "Blocked by Repro guardrails" });
+          continue;
+        }
+        const result = await executeAction({ page, action, request, config });
+        state.actionTrace.push({ ...action, ...result });
+        executed = true;
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        break;
+      }
+
+      if (!executed) {
+        state.actionTrace.push({ type: "stop", reason: "No planner action passed guardrails" });
+        break;
+      }
+    }
+
+    state.title = await page.title().catch(() => state.title);
+    state.finalUrl = page.url();
+    state.metadata = await collectMetadata(page).catch(() => state.metadata);
+    const afterPath = path.join(viewportDir, "after.png");
+    await page.screenshot({ path: afterPath, fullPage: true });
+    state.screenshotPaths.push(afterPath);
+
+    const video = page.video();
+    await context.close();
+    await browser.close();
+    const videoPath = video ? await video.path().catch(() => null) : null;
+    if (videoPath) state.videoPath = videoPath;
+
+    const published = await publishArtifacts({ jobId, files: state.screenshotPaths.concat(videoPath ? [videoPath] : []) }, config);
+    const screenshotUrls = published.filter((item) => item.path.endsWith(".png")).map((item) => item.url);
+    const videoUrl = published.find((item) => item.path === videoPath)?.url || null;
+
+    const finalObservation = await summarizeStateForReasoning(state);
+    const judgment = await reasoner.judge({
+      request,
+      observations: finalObservation,
+      finalObservation,
+      screenshotPaths: state.screenshotPaths
+    });
+
+    const reportDraft = buildEvidencePackage({
+      request,
+      viewport: viewport.name,
+      judgment,
+      state,
+      artifactRoot,
+      screenshotUrls,
+      videoUrl
+    });
+    const testResult = await reasoner.generateTest({
+      request,
+      report: reportDraft,
+      observations: finalObservation
+    });
+
+    return {
+      ...reportDraft,
+      regressionTest: testResult.code,
+      regressionTestFile: testResult.filename || "repro.spec.ts"
+    };
+  } catch (error) {
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+    throw error;
+  }
+}
+
+function createObservationState() {
+  return {
+    actionTrace: [],
+    plans: [],
     console: [],
     network: [],
     redirects: [],
+    screenshotPaths: [],
+    videoPath: null,
     finalUrl: null,
     title: null,
     metadata: {}
   };
+}
 
+function wirePageObservers(page, state) {
   page.on("console", (message) => {
-    observations.console.push({
+    state.console.push({
       type: message.type(),
-      text: message.text(),
+      text: redact(message.text()),
       location: message.location()
     });
   });
 
   page.on("requestfailed", (requestInfo) => {
-    observations.network.push({
+    state.network.push({
       url: requestInfo.url(),
       method: requestInfo.method(),
       failed: true,
@@ -79,7 +173,7 @@ async function runViewport({ request, viewport, artifactRoot }) {
   page.on("response", (response) => {
     const status = response.status();
     if (status >= 400) {
-      observations.network.push({
+      state.network.push({
         url: response.url(),
         method: response.request().method(),
         status,
@@ -89,155 +183,211 @@ async function runViewport({ request, viewport, artifactRoot }) {
   });
 
   page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) observations.redirects.push(frame.url());
+    if (frame === page.mainFrame()) state.redirects.push(frame.url());
+  });
+}
+
+async function observePage(page, state) {
+  const dom = await page.evaluate(() => {
+    const visible = (el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const text = (el) => (el.innerText || el.value || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().slice(0, 140);
+    const selectorFor = (el, index) => {
+      if (el.id) return `#${CSS.escape(el.id)}`;
+      const testId = el.getAttribute("data-testid") || el.getAttribute("data-test");
+      if (testId) return `[data-testid="${CSS.escape(testId)}"],[data-test="${CSS.escape(testId)}"]`;
+      const aria = el.getAttribute("aria-label");
+      if (aria) return `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria)}"]`;
+      el.setAttribute("data-repro-candidate", String(index));
+      return `[data-repro-candidate="${index}"]`;
+    };
+    const nodes = [...document.querySelectorAll("button,a,input,textarea,select,[role='button']")]
+      .filter(visible)
+      .slice(0, 60);
+    return {
+      url: location.href,
+      title: document.title,
+      bodyText: document.body.innerText.slice(0, 3000),
+      candidates: nodes.map((el, index) => ({
+        selector: selectorFor(el, index),
+        tag: el.tagName.toLowerCase(),
+        type: el.getAttribute("type") || "",
+        text: text(el),
+        href: el.href || ""
+      }))
+    };
   });
 
+  return {
+    ...dom,
+    actionTrace: state.actionTrace.slice(-8),
+    consoleErrors: meaningfulConsoleErrors(state.console).slice(-8),
+    failedRequests: meaningfulNetworkFailures(state.network).slice(-8)
+  };
+}
+
+async function executeAction({ page, action, request, config }) {
   try {
-    observations.steps.push(`Open ${request.url} in ${viewport.name} Chromium`);
-    await page.goto(request.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-
-    observations.title = await page.title();
-    observations.finalUrl = page.url();
-    observations.metadata = await collectMetadata(page);
-
-    const beforePath = path.join(viewportDir, "before.png");
-    await page.screenshot({ path: beforePath, fullPage: true });
-
-    await performTargetedInteractions({ page, request, observations });
-
-    const afterPath = path.join(viewportDir, "after.png");
-    await page.screenshot({ path: afterPath, fullPage: true });
-
-    const video = page.video();
-    await context.close();
-    await browser.close();
-
-    const videoPath = video ? await video.path().catch(() => null) : null;
-    const artifacts = {
-      jobId: path.basename(artifactRoot),
-      artifactRoot,
-      screenshots: [beforePath, afterPath],
-      screenshotUrls: [
-        `/artifacts/${path.basename(artifactRoot)}/${viewport.name}/before.png`,
-        `/artifacts/${path.basename(artifactRoot)}/${viewport.name}/after.png`
-      ],
-      video: videoPath
-    };
-    const regressionTest = generateRegressionTest({ request, observations });
-    return buildReport({ request, observations, artifacts, regressionTest });
+    if (action.type === "wait") {
+      await page.waitForTimeout(Math.min(Number(action.value || 1000), 5000));
+      return { status: "executed" };
+    }
+    if (action.type === "press") {
+      await page.keyboard.press(String(action.value || "Enter"));
+      return { status: "executed" };
+    }
+    if (action.type === "navigate") {
+      const next = new URL(action.value, request.url);
+      const current = new URL(request.url);
+      if (!config.scan.allowExternalNavigation && next.origin !== current.origin) {
+        return { status: "skipped", error: "External navigation blocked" };
+      }
+      await page.goto(next.toString(), { waitUntil: "domcontentloaded", timeout: 15000 });
+      return { status: "executed", url: next.toString() };
+    }
+    if (!action.selector) return { status: "skipped", error: "Missing selector" };
+    const locator = page.locator(action.selector);
+    const count = await locator.count();
+    if (count !== 1) return { status: "skipped", error: `Selector matched ${count} elements` };
+    if (action.type === "fill") {
+      await locator.fill(String(resolveFillValue(action, request)), { timeout: 5000 });
+      return { status: "executed" };
+    }
+    if (action.type === "click") {
+      await locator.click({ timeout: 5000 });
+      return { status: "executed" };
+    }
+    return { status: "skipped", error: `Unsupported action type ${action.type}` };
   } catch (error) {
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
-    throw error;
+    return { status: "failed", error: redact(error.message) };
   }
+}
+
+function resolveFillValue(action, request) {
+  if (action.value) return action.value;
+  const selector = `${action.selector || ""} ${action.reason || ""}`.toLowerCase();
+  const testDataKey = Object.keys(request.testData || {}).find((key) => selector.includes(key.toLowerCase()));
+  if (testDataKey) return request.testData[testDataKey];
+  if (selector.includes("email") || selector.includes("user")) return request.credentials?.username || "qa@example.com";
+  if (selector.includes("pass")) return request.credentials?.password || "";
+  return "QA Test";
 }
 
 async function collectMetadata(page) {
   return page.evaluate(() => ({
     title: document.title,
     description: document.querySelector("meta[name='description']")?.getAttribute("content") || null,
-    h1: [...document.querySelectorAll("h1")].map((node) => node.textContent?.trim()).filter(Boolean),
+    h1: [...document.querySelectorAll("h1")].map((node) => node.textContent?.trim()).filter(Boolean).slice(0, 5),
     forms: document.forms.length,
     buttons: document.querySelectorAll("button, input[type='button'], input[type='submit']").length,
     links: document.links.length
   }));
 }
 
-async function performTargetedInteractions({ page, request, observations }) {
-  const keywords = extractKeywords(request.bugReport);
-  await fillVisibleInputs({ page, request, observations });
-
-  const candidates = page.locator("button, a, input[type='button'], input[type='submit'], [role='button']");
-  const count = Math.min(await candidates.count(), 30);
-
-  for (let index = 0; index < count; index += 1) {
-    const candidate = candidates.nth(index);
-    if (!(await candidate.isVisible().catch(() => false))) continue;
-
-    const label = await candidate.innerText().catch(async () => candidate.getAttribute("value"));
-    const normalized = (label || "").toLowerCase();
-    if (keywords.length > 0 && !keywords.some((keyword) => normalized.includes(keyword))) continue;
-
-    observations.steps.push(`Click ${label || `interactive element ${index + 1}`}`);
-    await candidate.click({ timeout: 5000 }).catch((error) => {
-      observations.console.push({
-        type: "error",
-        text: `Interaction failed: ${error.message}`,
-        location: {}
-      });
-    });
-    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-    return;
-  }
-
-  observations.steps.push("No bug-report-matching interactive element was found for a targeted click");
+async function summarizeStateForReasoning(state) {
+  return {
+    finalUrl: state.finalUrl,
+    title: state.title,
+    redirects: state.redirects,
+    metadata: state.metadata,
+    actionTrace: state.actionTrace,
+    plannerDecisions: state.plans,
+    consoleErrors: meaningfulConsoleErrors(state.console),
+    failedRequests: meaningfulNetworkFailures(state.network)
+  };
 }
 
-async function fillVisibleInputs({ page, request, observations }) {
-  const values = request.testData || {};
-  const inputs = page.locator("input:not([type='hidden']), textarea");
-  const count = Math.min(await inputs.count(), 20);
-
-  for (let index = 0; index < count; index += 1) {
-    const input = inputs.nth(index);
-    if (!(await input.isVisible().catch(() => false))) continue;
-
-    const type = (await input.getAttribute("type").catch(() => "text")) || "text";
-    const name = (await input.getAttribute("name").catch(() => "")) || "";
-    const placeholder = (await input.getAttribute("placeholder").catch(() => "")) || "";
-    const key = Object.keys(values).find((item) => `${name} ${placeholder}`.toLowerCase().includes(item.toLowerCase()));
-    const value = key ? values[key] : defaultValue(type, name, placeholder, request.credentials);
-    if (!value) continue;
-
-    await input.fill(String(value), { timeout: 3000 }).catch(() => {});
-    observations.steps.push(`Fill ${name || placeholder || type} field`);
-  }
+function buildEvidencePackage({ request, viewport, judgment, state, artifactRoot, screenshotUrls, videoUrl }) {
+  return {
+    product: "Repro",
+    service: "Verified Bug Reproduction",
+    generatedAt: new Date().toISOString(),
+    input: {
+      url: request.url,
+      bugReport: request.bugReport,
+      expectedBehavior: request.expectedBehavior || null,
+      viewport
+    },
+    reproduced: Boolean(judgment.reproduced),
+    confidence: Number(judgment.confidence || 0),
+    severity: judgment.severity || "low",
+    summary: judgment.summary || "",
+    actualBehavior: judgment.actualBehavior || "",
+    expectedBehavior: judgment.expectedBehavior || request.expectedBehavior || null,
+    steps: state.actionTrace.map((item) => item.reason || `${item.type} ${item.selector || item.url || ""}`.trim()),
+    actionTrace: state.actionTrace,
+    evidenceTimeline: judgment.evidenceTimeline || [],
+    relatedBugIdeas: judgment.relatedBugIdeas || [],
+    githubIssue: judgment.githubIssue || null,
+    evidence: {
+      finalUrl: state.finalUrl,
+      title: state.title,
+      redirects: state.redirects,
+      consoleErrors: meaningfulConsoleErrors(state.console),
+      failedRequests: meaningfulNetworkFailures(state.network),
+      metadata: state.metadata,
+      screenshots: state.screenshotPaths,
+      screenshotUrls,
+      video: videoUrl
+    },
+    likelyCause: judgment.likelyCause || "Not enough evidence",
+    artifacts: {
+      artifactRoot,
+      screenshots: state.screenshotPaths,
+      screenshotUrls,
+      video: videoUrl
+    },
+    disclaimer: "This report is based only on collected browser evidence and OpenRouter reasoning. Repro does not invent unsupported findings."
+  };
 }
 
-function defaultValue(type, name, placeholder, credentials) {
-  const label = `${name} ${placeholder}`.toLowerCase();
-  if (label.includes("user") || label.includes("email")) return credentials?.username || "qa@example.com";
-  if (label.includes("pass")) return credentials?.password || null;
-  if (type === "email") return "qa@example.com";
-  if (type === "search") return "test";
-  if (type === "text") return "QA Test";
-  return null;
+function meaningfulConsoleErrors(entries) {
+  return entries.filter((entry) => ["error", "assert"].includes(entry.type));
 }
 
-function extractKeywords(text = "") {
-  const stop = new Set(["when", "after", "before", "click", "the", "and", "then", "page", "does", "not", "work"]);
-  return text.toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length > 3 && !stop.has(word))
-    .slice(0, 8);
-}
-
-function generateRegressionTest({ request, observations }) {
-  const escapedUrl = JSON.stringify(request.url);
-  const escapedReport = JSON.stringify(request.bugReport);
-  const stepComments = observations.steps.map((step) => `  // ${step.replace(/\n/g, " ")}`).join("\n");
-
-  return `import { test, expect } from '@playwright/test';
-
-test('reproduces reported bug: ${request.bugReport.replace(/'/g, "\\'").slice(0, 80)}', async ({ page }) => {
-  test.info().annotations.push({ type: 'bug-report', description: ${escapedReport} });
-${stepComments}
-  const consoleErrors = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
+function meaningfulNetworkFailures(entries) {
+  return entries.filter((entry) => {
+    if (entry.status >= 400) return true;
+    if (!entry.failed) return false;
+    if (entry.method === "HEAD" && /ERR_ABORTED/i.test(entry.errorText || "")) return false;
+    return !/ERR_ABORTED|NS_BINDING_ABORTED/i.test(entry.errorText || "");
   });
-  await page.goto(${escapedUrl}, { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('networkidle').catch(() => {});
-  expect(consoleErrors, 'No browser console errors should occur during this flow').toEqual([]);
-});
-`;
 }
 
-function mergeSeverity(values) {
+function mergeViewportReports({ request, reports }) {
   const rank = ["low", "medium", "high", "critical"];
-  return values.sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0] || "low";
+  return {
+    product: "Repro",
+    service: "Verified Bug Reproduction",
+    generatedAt: new Date().toISOString(),
+    input: {
+      url: request.url,
+      bugReport: request.bugReport,
+      expectedBehavior: request.expectedBehavior || null,
+      viewport: "both"
+    },
+    reproduced: reports.some((report) => report.reproduced),
+    confidence: Math.max(...reports.map((report) => Number(report.confidence || 0))),
+    severity: reports.map((report) => report.severity).sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0] || "low",
+    reports
+  };
+}
+
+function enforceScanDeadline(startedAt, config) {
+  if (Date.now() - startedAt > config.scan.maxScanSeconds * 1000) {
+    throw new SystemDownError("Scan exceeded the configured execution deadline.", { maxScanSeconds: config.scan.maxScanSeconds });
+  }
+}
+
+function redact(value = "") {
+  return String(value)
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9._-]+/g, "sk-[redacted]")
+    .replace(/password=([^&\s]+)/gi, "password=[redacted]")
+    .slice(0, 2000);
 }
 
 async function launchBrowser() {

@@ -6,14 +6,18 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
+    "start:env": "node --env-file=.env src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check src/server.js && node --check src/analyzer.js && node --check src/urlSafety.js && node --check src/report.js && node --check src/payment.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/analyzer.js && node --check src/urlSafety.js && node --check src/report.js && node --check src/payment.js && node --check src/config.js && node --check src/openrouter.js && node --check src/guardrails.js && node --check src/db.js && node --check src/queue.js && node --check src/storage.js && node --check src/worker.js && node --check public/app.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1092.0",
     "@okxweb3/x402-core": "^0.1.0",
     "@okxweb3/x402-evm": "^0.2.1",
     "@okxweb3/x402-express": "^0.1.1",
     "express": "^5.2.1",
+    "ioredis": "^5.11.1",
+    "pg": "^8.22.0",
     "playwright": "^1.54.0"
   },
   "engines": {

@@ -133,6 +133,7 @@
               <button type="button" class="tab" data-tab="steps">Steps</button>
               <button type="button" class="tab" data-tab="logs">Logs</button>
               <button type="button" class="tab" data-tab="test">Test</button>
+              <button type="button" class="tab" data-tab="issue">Issue</button>
             </div>
 
             <section id="tab-evidence" class="tab-panel">
@@ -168,8 +169,26 @@
               </div>
               <pre id="regression-test" class="code"></pre>
             </section>
+
+            <section id="tab-issue" class="tab-panel hidden">
+              <div class="test-heading">
+                <h3>GitHub issue draft</h3>
+                <button type="button" id="copy-issue" class="secondary">Copy</button>
+              </div>
+              <pre id="github-issue" class="code"></pre>
+            </section>
           </div>
         </section>
+      </section>
+
+      <section class="panel history-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">History</p>
+            <h2>Recent reproduction jobs</h2>
+          </div>
+        </div>
+        <div id="history-list" class="history-list"></div>
       </section>
     </main>
 

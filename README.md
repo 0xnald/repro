@@ -8,7 +8,9 @@ This repository implements a real A2MCP-friendly HTTP service for OKX.AI. It doe
 
 - Opens a real website/app URL in Chromium via Playwright.
 - Captures page screenshots, console errors, failed network requests, redirects, metadata, and browser context.
-- Attempts to reproduce the submitted bug report by interacting with matching links, buttons, inputs, and forms.
+- Uses OpenRouter as the required reasoning engine for planning, evidence judgment, report writing, screenshot reasoning, and regression test generation.
+- Runs reproduction requests as Redis-backed jobs and stores report history in Postgres.
+- Publishes screenshots/video artifacts to S3-compatible storage when configured.
 - Produces a structured Verified Reproduction Package.
 - Generates a developer-ready Playwright regression test from the actual browser steps performed.
 - Protects `POST /v1/reproduce` with the official OKX x402 seller middleware when `PAYMENT_MODE=x402`.
@@ -20,7 +22,7 @@ npm run check
 npm start
 ```
 
-For local unpaid development only, set `PAYMENT_MODE=free`, then call:
+For local unpaid development only, override `PAYMENT_MODE=free`, then call:
 
 ```powershell
 Invoke-RestMethod -Method Post http://localhost:8787/v1/reproduce -ContentType 'application/json' -Body '{
@@ -63,7 +65,7 @@ The service returns a Verified Reproduction Package:
 - `regressionTest`: generated Playwright test
 - `artifacts`: local artifact paths
 
-## Paid OKX.AI Configuration
+## Production Configuration
 
 The OKX A2MCP guide says free endpoints should return `HTTP 200` directly, while paid x402 endpoints should return `HTTP 402` with a payment challenge until paid. Repro uses the official OKX x402 seller SDK for paid mode and fails closed if required values are missing.
 
@@ -81,6 +83,36 @@ X402_RESOURCE_URL=https://your-production-domain/v1/reproduce
 X402_RESOURCE_DESCRIPTION=Repro verified bug reproduction package
 X402_MAX_TIMEOUT_SECONDS=300
 OKX_SYNC_SETTLE=false
+X402_SYNC_ON_START=true
+
+REPRO_REASONING_REQUIRED=true
+REPRO_ALLOW_STATIC_FALLBACK=false
+OPENROUTER_API_KEY=<from OpenRouter>
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_SITE_URL=https://your-production-domain
+OPENROUTER_APP_NAME=Repro
+REPRO_PLANNER_MODEL=anthropic/claude-sonnet-4
+REPRO_REPORT_MODEL=anthropic/claude-sonnet-4
+REPRO_TEST_MODEL=openai/gpt-4.1-mini
+REPRO_VISION_MODEL=google/gemini-2.5-flash
+REPRO_VISION_ENABLED=true
+REPRO_REASONING_TIMEOUT_MS=45000
+
+DATABASE_URL=<postgres connection string>
+REDIS_URL=<redis connection string>
+S3_ENDPOINT=<s3-compatible endpoint>
+S3_BUCKET=<bucket name>
+S3_ACCESS_KEY_ID=<access key>
+S3_SECRET_ACCESS_KEY=<secret key>
+S3_PUBLIC_BASE_URL=<public artifact base url>
+
+REPRO_MAX_ACTIONS=12
+MAX_SCAN_SECONDS=120
+ARTIFACT_RETENTION_DAYS=14
+REPRO_ALLOW_FORM_SUBMIT=false
+REPRO_ALLOW_EXTERNAL_NAVIGATION=false
+REPRO_ALLOW_DOWNLOADS=false
+REPRO_ALLOW_DESTRUCTIVE_ACTIONS=false
 ```
 
 Before listing on OKX.AI, deploy this service to a public HTTPS domain and self-check:
@@ -101,9 +133,11 @@ PAYMENT-REQUIRED: <base64 challenge>
 Expected response after a valid OKX payment replay:
 
 ```text
-HTTP/2 200
+HTTP/2 202
 PAYMENT-RESPONSE: <settlement receipt>
 ```
+
+The response includes `jobId`, `statusUrl`, and `reportUrl`. The dashboard polls the job until the Verified Reproduction Package is ready.
 
 ## Deployment Recommendation
 
