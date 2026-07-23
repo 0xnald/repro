@@ -51,6 +51,7 @@ async function submitRepro(event) {
   event.preventDefault();
   setRunning(true);
   setStatus("Running", "warn");
+  showPendingRun();
 
   try {
     const payload = buildPayload();
@@ -91,6 +92,7 @@ async function submitRepro(event) {
 
 async function pollJob(jobId) {
   if (!jobId) throw new Error("The server did not return a job id.");
+  document.querySelector("#summary").textContent = `Running real browser scan. Job ${jobId}`;
   for (let attempt = 0; attempt < 180; attempt += 1) {
     const response = await fetch(`/v1/jobs/${jobId}`);
     const job = await response.json();
@@ -227,6 +229,26 @@ function showError(message, details) {
   lastGithubIssue = "";
   document.querySelector("#regression-test").textContent = "";
   document.querySelector("#github-issue").textContent = "";
+}
+
+function showPendingRun() {
+  emptyState.classList.add("hidden");
+  results.classList.remove("hidden");
+  document.querySelector("#metric-reproduced").textContent = "-";
+  document.querySelector("#metric-confidence").textContent = "-";
+  document.querySelector("#metric-severity").textContent = "Running";
+  document.querySelector("#summary").textContent = "Queued. Repro is opening a real browser and collecting evidence.";
+  document.querySelector("#final-url").textContent = "-";
+  document.querySelector("#page-title").textContent = "-";
+  document.querySelector("#likely-cause").textContent = "-";
+  document.querySelector("#screenshots").innerHTML = "";
+  document.querySelector("#steps-list").innerHTML = "<li>Browser scan queued.</li>";
+  document.querySelector("#console-log").textContent = "Waiting for live console evidence.";
+  document.querySelector("#network-log").textContent = "Waiting for live network evidence.";
+  lastRegressionTest = "";
+  lastGithubIssue = "";
+  document.querySelector("#regression-test").textContent = "Waiting for generated regression test.";
+  document.querySelector("#github-issue").textContent = "Waiting for generated issue draft.";
 }
 
 function wireTabs() {

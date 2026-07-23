@@ -36,7 +36,7 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
   await fs.mkdir(viewportDir, { recursive: true });
 
   const browser = await launchBrowser();
-  const context = await newContextWithOptionalVideo(browser, viewport, viewportDir);
+  const context = await newContextWithOptionalVideo(browser, viewport, viewportDir, config);
   const page = await context.newPage();
   const state = createObservationState();
 
@@ -51,45 +51,52 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
     state.finalUrl = page.url();
     state.metadata = await collectMetadata(page);
     const beforePath = path.join(viewportDir, "before.png");
-    await page.screenshot({ path: beforePath, fullPage: true });
+    await page.screenshot({ path: beforePath, fullPage: config.scan.fullPageScreenshots });
     state.screenshotPaths.push(beforePath);
 
-    for (let turn = 0; turn < config.scan.maxActions; turn += 1) {
-      enforceScanDeadline(startedAt, config);
-      if (shouldStopForCleanLoad(request, state, turn)) {
-        state.actionTrace.push({ type: "stop", reason: "Clean-load evidence collected; moving to evidence judgment" });
-        break;
-      }
-      const observation = await observePage(page, state);
-      const plan = await reasoner.plan({ request, observation });
-      state.plans.push(plan);
-
-      const actions = Array.isArray(plan.actions) ? plan.actions : [];
-      if (actions.length === 0) {
-        state.actionTrace.push({ type: "stop", reason: "Planner returned no further actions" });
-        break;
-      }
-
-      let executed = false;
-      for (const action of actions.slice(0, 3)) {
-        if (isLowValueRepeatedWait(action, state)) {
-          state.actionTrace.push({ ...action, skipped: true, reason: "Repeated wait skipped to preserve scan deadline" });
-          continue;
+    if (isCleanLoadIntent(request)) {
+      await page.waitForTimeout(2500);
+      state.actionTrace.push({ type: "wait", value: "2500", status: "executed", reason: "Capture delayed console errors and failed requests" });
+      await boundedWaitForNetwork(page, state, 1500);
+      state.actionTrace.push({ type: "stop", reason: "Clean-load evidence collected; moving to evidence judgment" });
+    } else {
+      for (let turn = 0; turn < config.scan.maxActions; turn += 1) {
+        enforceScanDeadline(startedAt, config);
+        if (shouldStopForCleanLoad(request, state, turn)) {
+          state.actionTrace.push({ type: "stop", reason: "Clean-load evidence collected; moving to evidence judgment" });
+          break;
         }
-        if (!isActionAllowed(action, config)) {
-          state.actionTrace.push({ ...action, skipped: true, reason: "Blocked by Repro guardrails" });
-          continue;
-        }
-        const result = await executeAction({ page, action, request, config });
-        state.actionTrace.push({ ...action, ...result });
-        executed = true;
-        await boundedWaitForNetwork(page, state, 1500);
-        break;
-      }
+        const observation = await observePage(page, state);
+        const plan = await reasoner.plan({ request, observation });
+        state.plans.push(plan);
 
-      if (!executed) {
-        state.actionTrace.push({ type: "stop", reason: "No planner action passed guardrails" });
-        break;
+        const actions = Array.isArray(plan.actions) ? plan.actions : [];
+        if (actions.length === 0) {
+          state.actionTrace.push({ type: "stop", reason: "Planner returned no further actions" });
+          break;
+        }
+
+        let executed = false;
+        for (const action of actions.slice(0, 3)) {
+          if (isLowValueRepeatedWait(action, state)) {
+            state.actionTrace.push({ ...action, skipped: true, reason: "Repeated wait skipped to preserve scan deadline" });
+            continue;
+          }
+          if (!isActionAllowed(action, config)) {
+            state.actionTrace.push({ ...action, skipped: true, reason: "Blocked by Repro guardrails" });
+            continue;
+          }
+          const result = await executeAction({ page, action, request, config });
+          state.actionTrace.push({ ...action, ...result });
+          executed = true;
+          await boundedWaitForNetwork(page, state, 1500);
+          break;
+        }
+
+        if (!executed) {
+          state.actionTrace.push({ type: "stop", reason: "No planner action passed guardrails" });
+          break;
+        }
       }
     }
 
@@ -97,7 +104,7 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
     state.finalUrl = page.url();
     state.metadata = await collectMetadata(page).catch(() => state.metadata);
     const afterPath = path.join(viewportDir, "after.png");
-    await page.screenshot({ path: afterPath, fullPage: true });
+    await page.screenshot({ path: afterPath, fullPage: config.scan.fullPageScreenshots });
     state.screenshotPaths.push(afterPath);
 
     const video = page.video();
@@ -311,8 +318,8 @@ async function summarizeStateForReasoning(state) {
     metadata: state.metadata,
     actionTrace: state.actionTrace,
     plannerDecisions: state.plans,
-    consoleErrors: meaningfulConsoleErrors(state.console),
-    failedRequests: meaningfulNetworkFailures(state.network)
+    consoleErrors: compactEvidenceEntries(meaningfulConsoleErrors(state.console)),
+    failedRequests: compactEvidenceEntries(meaningfulNetworkFailures(state.network))
   };
 }
 
@@ -342,8 +349,8 @@ function buildEvidencePackage({ request, viewport, judgment, state, artifactRoot
       finalUrl: state.finalUrl,
       title: state.title,
       redirects: state.redirects,
-      consoleErrors: meaningfulConsoleErrors(state.console),
-      failedRequests: meaningfulNetworkFailures(state.network),
+      consoleErrors: compactEvidenceEntries(meaningfulConsoleErrors(state.console), 40),
+      failedRequests: compactEvidenceEntries(meaningfulNetworkFailures(state.network), 40),
       metadata: state.metadata,
       screenshots: state.screenshotPaths,
       screenshotUrls,
@@ -374,11 +381,23 @@ function meaningfulNetworkFailures(entries) {
 }
 
 function shouldStopForCleanLoad(request, state, turn) {
-  const report = `${request.bugReport} ${request.expectedBehavior || ""}`.toLowerCase();
-  const cleanLoadIntent = /load cleanly|console errors|failed requests|runtime errors|page loads/.test(report);
-  if (!cleanLoadIntent) return false;
+  if (!isCleanLoadIntent(request)) return false;
   const waited = state.actionTrace.filter((item) => item.type === "wait" && item.status === "executed").length;
   return turn >= 2 && waited >= 1 && meaningfulConsoleErrors(state.console).length === 0 && meaningfulNetworkFailures(state.network).length === 0;
+}
+
+function isCleanLoadIntent(request) {
+  const report = `${request.bugReport} ${request.expectedBehavior || ""}`.toLowerCase();
+  return /load cleanly|console errors|failed requests|runtime errors|page loads/.test(report);
+}
+
+function compactEvidenceEntries(entries, limit = 20) {
+  return entries.slice(0, limit).map((entry) => ({
+    ...entry,
+    url: entry.url ? redact(entry.url) : entry.url,
+    text: entry.text ? redact(entry.text) : entry.text,
+    location: entry.location ? { ...entry.location, url: redact(entry.location.url || "") } : entry.location
+  }));
 }
 
 function isLowValueRepeatedWait(action, state) {
@@ -429,11 +448,13 @@ async function launchBrowser() {
   }
 }
 
-async function newContextWithOptionalVideo(browser, viewport, viewportDir) {
+async function newContextWithOptionalVideo(browser, viewport, viewportDir, config) {
   const contextOptions = {
-    viewport: viewport.options,
-    recordVideo: { dir: viewportDir, size: { width: viewport.options.width, height: viewport.options.height } }
+    viewport: viewport.options
   };
+  if (config.scan.recordVideo) {
+    contextOptions.recordVideo = { dir: viewportDir, size: { width: viewport.options.width, height: viewport.options.height } };
+  }
 
   const context = await browser.newContext(contextOptions);
   try {

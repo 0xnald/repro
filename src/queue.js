@@ -2,7 +2,7 @@ import Redis from "ioredis";
 import { getConfig } from "./config.js";
 import { SystemDownError } from "./errors.js";
 
-const queueKey = process.env.REPRO_QUEUE_KEY || "repro:jobs:v2";
+const queueKey = process.env.REPRO_QUEUE_KEY || "repro:jobs:production-v1";
 let redis;
 let memoryQueue = [];
 let memoryPayloads = new Map();

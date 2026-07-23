@@ -30,6 +30,8 @@ export function getConfig() {
       allowExternalNavigation: readBoolean("REPRO_ALLOW_EXTERNAL_NAVIGATION", false),
       allowDownloads: readBoolean("REPRO_ALLOW_DOWNLOADS", false),
       allowDestructiveActions: readBoolean("REPRO_ALLOW_DESTRUCTIVE_ACTIONS", false),
+      recordVideo: readBoolean("REPRO_RECORD_VIDEO", false),
+      fullPageScreenshots: readBoolean("REPRO_FULL_PAGE_SCREENSHOTS", false),
       artifactRetentionDays: Number(process.env.ARTIFACT_RETENTION_DAYS || 14)
     },
     database: {
