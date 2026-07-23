@@ -45,7 +45,7 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
   try {
     state.actionTrace.push({ type: "open", url: request.url, viewport: viewport.name, reason: "Start reproduction run" });
     await page.goto(request.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await boundedWaitForNetwork(page, state, 3000);
 
     state.title = await page.title();
     state.finalUrl = page.url();
@@ -56,6 +56,10 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
 
     for (let turn = 0; turn < config.scan.maxActions; turn += 1) {
       enforceScanDeadline(startedAt, config);
+      if (shouldStopForCleanLoad(request, state, turn)) {
+        state.actionTrace.push({ type: "stop", reason: "Clean-load evidence collected; moving to evidence judgment" });
+        break;
+      }
       const observation = await observePage(page, state);
       const plan = await reasoner.plan({ request, observation });
       state.plans.push(plan);
@@ -68,6 +72,10 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
 
       let executed = false;
       for (const action of actions.slice(0, 3)) {
+        if (isLowValueRepeatedWait(action, state)) {
+          state.actionTrace.push({ ...action, skipped: true, reason: "Repeated wait skipped to preserve scan deadline" });
+          continue;
+        }
         if (!isActionAllowed(action, config)) {
           state.actionTrace.push({ ...action, skipped: true, reason: "Blocked by Repro guardrails" });
           continue;
@@ -75,7 +83,7 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
         const result = await executeAction({ page, action, request, config });
         state.actionTrace.push({ ...action, ...result });
         executed = true;
-        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        await boundedWaitForNetwork(page, state, 1500);
         break;
       }
 
@@ -103,6 +111,7 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
     const videoUrl = published.find((item) => item.path === videoPath)?.url || null;
 
     const finalObservation = await summarizeStateForReasoning(state);
+    enforceScanDeadline(startedAt, config);
     const judgment = await reasoner.judge({
       request,
       observations: finalObservation,
@@ -119,6 +128,7 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
       screenshotUrls,
       videoUrl
     });
+    enforceScanDeadline(startedAt, config);
     const testResult = await reasoner.generateTest({
       request,
       report: reportDraft,
@@ -135,6 +145,12 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
     await browser.close().catch(() => {});
     throw error;
   }
+}
+
+async function boundedWaitForNetwork(page, state, timeoutMs) {
+  await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {
+    state.actionTrace.push({ type: "wait", status: "skipped", reason: `Network remained active after ${timeoutMs}ms` });
+  });
 }
 
 function createObservationState() {
@@ -355,6 +371,20 @@ function meaningfulNetworkFailures(entries) {
     if (entry.method === "HEAD" && /ERR_ABORTED/i.test(entry.errorText || "")) return false;
     return !/ERR_ABORTED|NS_BINDING_ABORTED/i.test(entry.errorText || "");
   });
+}
+
+function shouldStopForCleanLoad(request, state, turn) {
+  const report = `${request.bugReport} ${request.expectedBehavior || ""}`.toLowerCase();
+  const cleanLoadIntent = /load cleanly|console errors|failed requests|runtime errors|page loads/.test(report);
+  if (!cleanLoadIntent) return false;
+  const waited = state.actionTrace.filter((item) => item.type === "wait" && item.status === "executed").length;
+  return turn >= 2 && waited >= 1 && meaningfulConsoleErrors(state.console).length === 0 && meaningfulNetworkFailures(state.network).length === 0;
+}
+
+function isLowValueRepeatedWait(action, state) {
+  if (action.type !== "wait") return false;
+  const waits = state.actionTrace.filter((item) => item.type === "wait" && item.status === "executed").length;
+  return waits >= 2;
 }
 
 function mergeViewportReports({ request, reports }) {
