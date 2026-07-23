@@ -3,7 +3,7 @@ import {
   x402ResourceServer
 } from "@okxweb3/x402-express";
 import { OKXFacilitatorClient } from "@okxweb3/x402-core/facilitator";
-import { ExactEvmScheme } from "@okxweb3/x402-evm";
+import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 
 const paymentRoute = "POST /v1/reproduce";
 
