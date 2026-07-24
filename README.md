@@ -77,6 +77,7 @@ Required production environment:
 ```bash
 PAYMENT_MODE=x402
 REPRO_START_WORKER=false
+REPRO_SYNC_CACHE_TTL_SECONDS=86400
 OKX_API_KEY=<from OKX Developer Portal>
 OKX_SECRET_KEY=<from OKX Developer Portal>
 OKX_PASSPHRASE=<from OKX Developer Portal>

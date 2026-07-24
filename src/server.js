@@ -138,8 +138,32 @@ function publicJob(job) {
 
 async function createReproJob(body, { waitForReport = false } = {}) {
   const normalized = await validateAndNormalizeRequest(body, config);
+  const storedRequest = sanitizeForStorage(normalized);
+
+  if (waitForReport) {
+    const cached = await findFreshCompletedReport(storedRequest);
+    if (cached) {
+      return {
+        jobId: cached.id,
+        status: "completed",
+        statusUrl: absoluteUrl(`/v1/jobs/${cached.id}`),
+        reportUrl: absoluteUrl(`/v1/reports/${cached.id}`),
+        cached: true,
+        cachedAt: cached.completed_at,
+        report: {
+          ...cached.report,
+          cache: {
+            sourceJobId: cached.id,
+            completedAt: cached.completed_at,
+            freshnessSeconds: Math.max(0, Math.round((Date.now() - new Date(cached.completed_at || cached.updated_at).getTime()) / 1000))
+          }
+        }
+      };
+    }
+  }
+
   const jobId = crypto.randomUUID();
-  await createJob({ id: jobId, request: sanitizeForStorage(normalized) });
+  await createJob({ id: jobId, request: storedRequest });
 
   if (waitForReport) {
     await updateJob(jobId, { status: "running" });
@@ -173,6 +197,19 @@ async function createReproJob(body, { waitForReport = false } = {}) {
     statusUrl: `/v1/jobs/${jobId}`,
     reportUrl: `/v1/reports/${jobId}`
   };
+}
+
+async function findFreshCompletedReport(storedRequest) {
+  if (!config.app.syncCacheTtlSeconds || config.app.syncCacheTtlSeconds <= 0) return null;
+  const jobs = await listJobs(100);
+  const requestKey = JSON.stringify(storedRequest);
+  const ttlMs = config.app.syncCacheTtlSeconds * 1000;
+  return jobs.find((job) => {
+    if (job.status !== "completed" || !job.report) return false;
+    const completedAt = new Date(job.completed_at || job.updated_at).getTime();
+    if (!Number.isFinite(completedAt) || Date.now() - completedAt > ttlMs) return false;
+    return JSON.stringify(job.request) === requestKey;
+  }) || null;
 }
 
 function shouldWaitForReport(req) {

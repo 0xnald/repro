@@ -8,7 +8,8 @@ export function getConfig() {
       port: Number(process.env.PORT || 8787),
       artifactDir: process.env.ARTIFACT_DIR || "./artifacts",
       publicBaseUrl: process.env.PUBLIC_BASE_URL || process.env.OPENROUTER_SITE_URL || "http://localhost:8787",
-      startWorker: readBoolean("REPRO_START_WORKER", (process.env.PAYMENT_MODE || "free").toLowerCase() !== "x402")
+      startWorker: readBoolean("REPRO_START_WORKER", (process.env.PAYMENT_MODE || "free").toLowerCase() !== "x402"),
+      syncCacheTtlSeconds: Number(process.env.REPRO_SYNC_CACHE_TTL_SECONDS || 86400)
     },
     reasoning: {
       required: reasoningRequired,

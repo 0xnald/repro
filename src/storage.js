@@ -25,16 +25,24 @@ export async function publishArtifacts({ jobId, files }, config = getConfig()) {
   for (const filePath of files) {
     const key = `repro/${jobId}/${path.basename(path.dirname(filePath))}/${path.basename(filePath)}`;
     const body = await fs.readFile(filePath);
-    await client.send(new PutObjectCommand({
-      Bucket: config.storage.bucket,
-      Key: key,
-      Body: body,
-      ContentType: contentType(filePath)
-    }));
-    uploaded.push({
-      path: filePath,
-      url: `${config.storage.publicBaseUrl.replace(/\/$/, "")}/${key}`
-    });
+    try {
+      await client.send(new PutObjectCommand({
+        Bucket: config.storage.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType(filePath)
+      }));
+      uploaded.push({
+        path: filePath,
+        url: `${config.storage.publicBaseUrl.replace(/\/$/, "")}/${key}`
+      });
+    } catch (error) {
+      uploaded.push({
+        path: filePath,
+        url: localArtifactUrl(jobId, filePath),
+        warning: `Artifact upload failed: ${error.message || "unknown storage error"}`
+      });
+    }
   }
   return uploaded;
 }
