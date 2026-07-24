@@ -22,7 +22,7 @@ async function workerLoop() {
   }
 }
 
-async function processJob(jobId, payload) {
+export async function processJob(jobId, payload) {
   if (!payload) {
     await updateJob(jobId, {
       status: "failed",

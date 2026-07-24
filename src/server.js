@@ -7,7 +7,7 @@ import { createPaymentMiddleware, paymentStatus } from "./payment.js";
 import { initDb, createJob, getJob, listJobs, updateJob } from "./db.js";
 import { enqueueJob, queueStatus } from "./queue.js";
 import { storageStatus } from "./storage.js";
-import { startWorker } from "./worker.js";
+import { processJob, startWorker } from "./worker.js";
 import { reproduceBug } from "./analyzer.js";
 import { ReproError } from "./errors.js";
 
@@ -190,12 +190,17 @@ async function createReproJob(body, { waitForReport = false } = {}) {
     }
   }
 
-  await enqueueJob(jobId, normalized, config);
+  if (config.app.startWorker) {
+    await enqueueJob(jobId, normalized, config);
+  } else {
+    void processJob(jobId, normalized);
+  }
   return {
     jobId,
     status: "queued",
-    statusUrl: `/v1/jobs/${jobId}`,
-    reportUrl: `/v1/reports/${jobId}`
+    statusUrl: absoluteUrl(`/v1/jobs/${jobId}`),
+    reportUrl: absoluteUrl(`/v1/reports/${jobId}`),
+    message: "Repro accepted the paid request and started a real browser reproduction job. Poll statusUrl until status is completed, then fetch reportUrl."
   };
 }
 
@@ -222,7 +227,7 @@ function stableJson(value) {
 
 function shouldWaitForReport(req) {
   if (String(req.query.sync || "") === "1") return true;
-  return String(process.env.PAYMENT_MODE || "").toLowerCase() === "x402";
+  return false;
 }
 
 function absoluteUrl(relativePath) {
