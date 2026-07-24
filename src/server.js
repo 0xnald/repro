@@ -78,16 +78,18 @@ if (paymentMiddleware) {
 
 app.post("/v1/reproduce", async (req, res, next) => {
   try {
-    const normalized = await validateAndNormalizeRequest(req.body, config);
-    const jobId = crypto.randomUUID();
-    await createJob({ id: jobId, request: sanitizeForStorage(normalized) });
-    await enqueueJob(jobId, normalized, config);
-    res.status(202).json({
-      jobId,
-      status: "queued",
-      statusUrl: `/v1/jobs/${jobId}`,
-      reportUrl: `/v1/reports/${jobId}`
-    });
+    const job = await createReproJob(req.body);
+    res.status(202).json(job);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/v1/reproduce", async (req, res, next) => {
+  try {
+    const body = decodeTaskPayload(req.query);
+    const job = await createReproJob(body);
+    res.status(202).json(job);
   } catch (error) {
     next(error);
   }
@@ -128,4 +130,50 @@ function publicJob(job) {
     updatedAt: job.updated_at,
     completedAt: job.completed_at
   };
+}
+
+async function createReproJob(body) {
+  const normalized = await validateAndNormalizeRequest(body, config);
+  const jobId = crypto.randomUUID();
+  await createJob({ id: jobId, request: sanitizeForStorage(normalized) });
+  await enqueueJob(jobId, normalized, config);
+  return {
+    jobId,
+    status: "queued",
+    statusUrl: `/v1/jobs/${jobId}`,
+    reportUrl: `/v1/reports/${jobId}`
+  };
+}
+
+function decodeTaskPayload(query) {
+  if (query.body) return parseJsonQuery(query.body, "body");
+  if (query.serviceParams) return parseJsonQuery(query.serviceParams, "serviceParams");
+  const body = {
+    url: query.url,
+    bugReport: query.bugReport,
+    expectedBehavior: query.expectedBehavior,
+    viewport: query.viewport
+  };
+
+  if (query.username || query.password) {
+    body.credentials = {
+      username: query.username,
+      password: query.password
+    };
+  }
+  if (query.testData) body.testData = parseJsonQuery(query.testData, "testData");
+  return body;
+}
+
+function parseJsonQuery(value, name) {
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    const error = new ReproError(`Invalid JSON in ${name}.`, {
+      code: "invalid_request",
+      status: 400,
+      details: { field: name }
+    });
+    throw error;
+  }
 }

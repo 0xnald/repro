@@ -5,7 +5,7 @@ import {
 import { OKXFacilitatorClient } from "@okxweb3/x402-core/facilitator";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 
-const paymentRoute = "POST /v1/reproduce";
+const paymentRoutes = ["GET /v1/reproduce", "POST /v1/reproduce"];
 
 export function createPaymentMiddleware() {
   const mode = paymentMode();
@@ -26,8 +26,9 @@ export function createPaymentMiddleware() {
   const server = new x402ResourceServer(facilitator)
     .register(env.X402_NETWORK, new ExactEvmScheme());
 
-  const routes = {
-    [paymentRoute]: {
+  const routes = Object.fromEntries(paymentRoutes.map((route) => [
+    route,
+    {
       accepts: [{
         scheme: "exact",
         network: env.X402_NETWORK,
@@ -37,9 +38,72 @@ export function createPaymentMiddleware() {
       }],
       description: env.X402_RESOURCE_DESCRIPTION,
       mimeType: "application/json",
-      resource: env.X402_RESOURCE_URL
+      resource: env.X402_RESOURCE_URL,
+      unpaidResponseBody: () => ({
+        contentType: "application/json",
+        body: {
+          product: "Repro",
+          service: "Verified Bug Reproduction",
+          inputRequired: true,
+          fields: reproInputFields(),
+          example: {
+            url: "https://example.com",
+            bugReport: "Describe the bug or workflow to verify.",
+            expectedBehavior: "Describe the expected behavior.",
+            viewport: "desktop",
+            credentials: {
+              username: "optional",
+              password: "optional"
+            }
+          }
+        }
+      }),
+      extensions: {
+        outputSchema: {
+          input: {
+            type: "http",
+            method: "POST",
+            bodyType: "json",
+            body: {
+              type: "object",
+              required: ["url", "bugReport"],
+              properties: {
+                url: {
+                  type: "string",
+                  description: "Public website or app URL to reproduce against."
+                },
+                bugReport: {
+                  type: "string",
+                  description: "Bug report, workflow, or behavior Repro should verify."
+                },
+                expectedBehavior: {
+                  type: "string",
+                  description: "Expected correct behavior."
+                },
+                viewport: {
+                  type: "string",
+                  enum: ["desktop", "mobile", "both"],
+                  description: "Browser viewport to use."
+                },
+                credentials: {
+                  type: "object",
+                  description: "Optional test login credentials.",
+                  properties: {
+                    username: { type: "string" },
+                    password: { type: "string" }
+                  }
+                },
+                testData: {
+                  type: "object",
+                  description: "Optional structured test data."
+                }
+              }
+            }
+          }
+        }
+      }
     }
-  };
+  ]));
 
   const syncFacilitatorOnStart = process.env.X402_SYNC_ON_START !== "false";
   return paymentMiddleware(routes, server, undefined, undefined, syncFacilitatorOnStart);
@@ -49,12 +113,59 @@ export function paymentStatus() {
   const mode = paymentMode();
   return {
     mode,
-    route: paymentRoute,
+    route: paymentRoutes.join(", "),
     price: process.env.REPRO_PRICE || null,
     network: process.env.X402_NETWORK || null,
     payToConfigured: Boolean(process.env.PAY_TO_ADDRESS),
     facilitatorConfigured: Boolean(process.env.OKX_API_KEY && process.env.OKX_SECRET_KEY && process.env.OKX_PASSPHRASE)
   };
+}
+
+function reproInputFields() {
+  return [
+    {
+      name: "url",
+      type: "string",
+      required: true,
+      description: "Public website or app URL to reproduce against."
+    },
+    {
+      name: "bugReport",
+      type: "string",
+      required: true,
+      description: "Bug report, workflow, or behavior Repro should verify."
+    },
+    {
+      name: "expectedBehavior",
+      type: "string",
+      required: false,
+      description: "Expected correct behavior."
+    },
+    {
+      name: "viewport",
+      type: "desktop | mobile | both",
+      required: false,
+      description: "Browser viewport. Defaults to desktop."
+    },
+    {
+      name: "credentials.username",
+      type: "string",
+      required: false,
+      description: "Optional login username or email for test accounts."
+    },
+    {
+      name: "credentials.password",
+      type: "string",
+      required: false,
+      description: "Optional login password for test accounts."
+    },
+    {
+      name: "testData",
+      type: "object",
+      required: false,
+      description: "Optional structured data for the test flow."
+    }
+  ];
 }
 
 function paymentMode() {
