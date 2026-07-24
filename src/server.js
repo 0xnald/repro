@@ -202,14 +202,22 @@ async function createReproJob(body, { waitForReport = false } = {}) {
 async function findFreshCompletedReport(storedRequest) {
   if (!config.app.syncCacheTtlSeconds || config.app.syncCacheTtlSeconds <= 0) return null;
   const jobs = await listJobs(100);
-  const requestKey = JSON.stringify(storedRequest);
+  const requestKey = stableJson(storedRequest);
   const ttlMs = config.app.syncCacheTtlSeconds * 1000;
   return jobs.find((job) => {
     if (job.status !== "completed" || !job.report) return false;
     const completedAt = new Date(job.completed_at || job.updated_at).getTime();
     if (!Number.isFinite(completedAt) || Date.now() - completedAt > ttlMs) return false;
-    return JSON.stringify(job.request) === requestKey;
+    return stableJson(job.request) === requestKey;
   }) || null;
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function shouldWaitForReport(req) {
