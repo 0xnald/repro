@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 import { getConfig, serviceReadiness } from "./config.js";
 import { validateAndNormalizeRequest, sanitizeForStorage } from "./guardrails.js";
 import { createPaymentMiddleware, paymentStatus } from "./payment.js";
-import { initDb, createJob, getJob, listJobs } from "./db.js";
+import { initDb, createJob, getJob, listJobs, updateJob } from "./db.js";
 import { enqueueJob, queueStatus } from "./queue.js";
 import { storageStatus } from "./storage.js";
 import { startWorker } from "./worker.js";
+import { reproduceBug } from "./analyzer.js";
 import { ReproError } from "./errors.js";
 
 const config = getConfig();
@@ -78,8 +79,8 @@ if (paymentMiddleware) {
 
 app.post("/v1/reproduce", async (req, res, next) => {
   try {
-    const job = await createReproJob(req.body);
-    res.status(202).json(job);
+    const job = await createReproJob(req.body, { waitForReport: shouldWaitForReport(req) });
+    res.status(job.status === "completed" ? 200 : 202).json(job);
   } catch (error) {
     next(error);
   }
@@ -88,8 +89,8 @@ app.post("/v1/reproduce", async (req, res, next) => {
 app.get("/v1/reproduce", async (req, res, next) => {
   try {
     const body = decodeTaskPayload(req.query);
-    const job = await createReproJob(body);
-    res.status(202).json(job);
+    const job = await createReproJob(body, { waitForReport: shouldWaitForReport(req) });
+    res.status(job.status === "completed" ? 200 : 202).json(job);
   } catch (error) {
     next(error);
   }
@@ -132,16 +133,67 @@ function publicJob(job) {
   };
 }
 
-async function createReproJob(body) {
+async function createReproJob(body, { waitForReport = false } = {}) {
   const normalized = await validateAndNormalizeRequest(body, config);
   const jobId = crypto.randomUUID();
   await createJob({ id: jobId, request: sanitizeForStorage(normalized) });
+
+  if (waitForReport) {
+    await updateJob(jobId, { status: "running" });
+    try {
+      const report = await reproduceBug(normalized, { jobId });
+      await updateJob(jobId, {
+        status: "completed",
+        report,
+        error: null
+      });
+      return {
+        jobId,
+        status: "completed",
+        statusUrl: absoluteUrl(`/v1/jobs/${jobId}`),
+        reportUrl: absoluteUrl(`/v1/reports/${jobId}`),
+        report
+      };
+    } catch (error) {
+      await updateJob(jobId, {
+        status: "failed",
+        error: serializeError(error)
+      });
+      throw error;
+    }
+  }
+
   await enqueueJob(jobId, normalized, config);
   return {
     jobId,
     status: "queued",
     statusUrl: `/v1/jobs/${jobId}`,
     reportUrl: `/v1/reports/${jobId}`
+  };
+}
+
+function shouldWaitForReport(req) {
+  if (String(req.query.sync || "") === "1") return true;
+  return String(process.env.PAYMENT_MODE || "").toLowerCase() === "x402";
+}
+
+function absoluteUrl(relativePath) {
+  return new URL(relativePath, config.app.publicBaseUrl).toString();
+}
+
+function serializeError(error) {
+  if (error instanceof ReproError) {
+    return {
+      code: error.code,
+      message: error.message,
+      status: error.status,
+      details: error.details || null
+    };
+  }
+  return {
+    code: "internal_error",
+    message: error.message || "Repro failed.",
+    status: 500
   };
 }
 
