@@ -14,7 +14,7 @@ This repository implements a real A2MCP-friendly HTTP service for OKX.AI. It doe
 - Produces a structured Verified Reproduction Package.
 - Generates a developer-ready Playwright regression test from the actual browser steps performed.
 - Protects `GET /v1/reproduce` and `POST /v1/reproduce` with the official OKX x402 seller middleware when `PAYMENT_MODE=x402`.
-- Returns completed reports inline for paid x402 calls, so OKX.AI receives the actual deliverable rather than a queued placeholder.
+- Returns a fast structured `202` job acknowledgment for paid x402 calls, so OKX.AI replay clients do not time out while the real browser reproduction continues in the background.
 
 ## Run Locally
 
@@ -67,6 +67,20 @@ The service returns a Verified Reproduction Package:
 - `likelyCause`: deterministic hypothesis based only on collected evidence
 - `regressionTest`: generated Playwright test
 - `artifacts`: local artifact paths
+
+For paid x402 calls, long browser work is asynchronous. A valid paid replay returns:
+
+```json
+{
+  "jobId": "uuid",
+  "status": "queued",
+  "statusUrl": "https://repro-asp.up.railway.app/v1/jobs/uuid",
+  "reportUrl": "https://repro-asp.up.railway.app/v1/reports/uuid",
+  "message": "Repro accepted the paid request and started a real browser reproduction job. Poll statusUrl until status is completed, then fetch reportUrl."
+}
+```
+
+When `statusUrl` returns `completed`, `reportUrl` returns the full Verified Reproduction Package. If a job fails, `statusUrl` returns a structured `error` object instead of dropping the connection.
 
 ## Production Configuration
 
