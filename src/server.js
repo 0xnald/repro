@@ -35,6 +35,7 @@ app.get("/health", async (_, res) => {
     product: "Repro",
     service: "Verified Bug Reproduction",
     payment: paymentStatus(),
+    worker: { enabled: config.app.startWorker },
     readiness: serviceReadiness(config),
     queue: await queueStatus(config),
     storage: storageStatus(config)
@@ -114,7 +115,9 @@ app.use((error, _, res, __) => {
   });
 });
 
-startWorker();
+if (config.app.startWorker) {
+  startWorker();
+}
 
 app.listen(port, () => {
   console.log(`Repro ASP listening on http://localhost:${port}`);

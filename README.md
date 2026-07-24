@@ -13,7 +13,8 @@ This repository implements a real A2MCP-friendly HTTP service for OKX.AI. It doe
 - Publishes screenshots/video artifacts to S3-compatible storage when configured.
 - Produces a structured Verified Reproduction Package.
 - Generates a developer-ready Playwright regression test from the actual browser steps performed.
-- Protects `POST /v1/reproduce` with the official OKX x402 seller middleware when `PAYMENT_MODE=x402`.
+- Protects `GET /v1/reproduce` and `POST /v1/reproduce` with the official OKX x402 seller middleware when `PAYMENT_MODE=x402`.
+- Returns completed reports inline for paid x402 calls, so OKX.AI receives the actual deliverable rather than a queued placeholder.
 
 ## Run Locally
 
@@ -31,6 +32,8 @@ Invoke-RestMethod -Method Post http://localhost:8787/v1/reproduce -ContentType '
   "viewport": "desktop"
 }'
 ```
+
+If your local `.env` points at production Postgres or Redis, keep `REPRO_START_WORKER=false` unless you intentionally want this machine to process jobs. For isolated local dashboard testing, use a separate development `REPRO_QUEUE_KEY` and set `REPRO_START_WORKER=true`.
 
 ## Request Shape
 
@@ -73,6 +76,7 @@ Required production environment:
 
 ```bash
 PAYMENT_MODE=x402
+REPRO_START_WORKER=false
 OKX_API_KEY=<from OKX Developer Portal>
 OKX_SECRET_KEY=<from OKX Developer Portal>
 OKX_PASSPHRASE=<from OKX Developer Portal>
