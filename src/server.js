@@ -226,7 +226,9 @@ function shouldWaitForReport(req) {
 }
 
 function absoluteUrl(relativePath) {
-  return new URL(relativePath, config.app.publicBaseUrl).toString();
+  const base = String(config.app.publicBaseUrl || "").trim();
+  const normalizedBase = /^https?:\/\//i.test(base) ? base : `https://${base}`;
+  return new URL(relativePath, normalizedBase.endsWith("/") ? normalizedBase : `${normalizedBase}/`).toString();
 }
 
 function serializeError(error) {
