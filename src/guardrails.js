@@ -3,8 +3,16 @@ import { GuardrailError, ValidationError } from "./errors.js";
 import { getConfig } from "./config.js";
 
 const destructiveTerms = [
-  "delete",
+  "delete account",
+  "delete user",
+  "delete profile",
+  "delete workspace",
+  "delete repository",
   "remove account",
+  "remove user",
+  "remove profile",
+  "remove workspace",
+  "remove repository",
   "close account",
   "purchase",
   "buy now",
@@ -30,8 +38,8 @@ export async function validateAndNormalizeRequest(body, config = getConfig()) {
   if (body.testData && typeof body.testData !== "object") throw new ValidationError("testData must be an object");
 
   const safeUrl = await assertPublicHttpUrl(body.url);
-  const combinedText = `${body.bugReport} ${body.expectedBehavior || ""}`.toLowerCase();
-  if (!config.scan.allowDestructiveActions && destructiveTerms.some((term) => combinedText.includes(term))) {
+  const explicitActionText = `${body.action || ""} ${body.workflow || ""}`.toLowerCase();
+  if (!config.scan.allowDestructiveActions && explicitActionText && destructiveTerms.some((term) => explicitActionText.includes(term))) {
     throw new GuardrailError("This request appears to involve a destructive or payment-like action. Use a sandbox flow or enable explicit destructive-action testing.");
   }
 

@@ -227,6 +227,8 @@ function stableJson(value) {
 }
 
 function shouldWaitForReport(req) {
+  if ((process.env.PAYMENT_MODE || "free").toLowerCase() === "x402") return true;
+  if (String(req.query.async || "") === "1") return false;
   if (String(req.query.sync || "") === "1") return true;
   return false;
 }

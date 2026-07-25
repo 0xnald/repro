@@ -36,7 +36,7 @@ export function createPaymentMiddleware() {
         price: env.REPRO_PRICE,
         maxTimeoutSeconds: Number(process.env.X402_MAX_TIMEOUT_SECONDS || 300)
       }],
-      description: env.X402_RESOURCE_DESCRIPTION,
+      description: `${env.X402_RESOURCE_DESCRIPTION}. Required JSON fields: url, bugReport.`,
       mimeType: "application/json",
       resource: env.X402_RESOURCE_URL,
       unpaidResponseBody: () => ({
@@ -46,6 +46,7 @@ export function createPaymentMiddleware() {
           service: "Verified Bug Reproduction",
           inputRequired: true,
           fields: reproInputFields(),
+          inputSchema: reproInputSchema(),
           example: {
             url: "https://example.com",
             bugReport: "Describe the bug or workflow to verify.",
@@ -64,41 +65,7 @@ export function createPaymentMiddleware() {
             type: "http",
             method: "POST",
             bodyType: "json",
-            body: {
-              type: "object",
-              required: ["url", "bugReport"],
-              properties: {
-                url: {
-                  type: "string",
-                  description: "Public website or app URL to reproduce against."
-                },
-                bugReport: {
-                  type: "string",
-                  description: "Bug report, workflow, or behavior Repro should verify."
-                },
-                expectedBehavior: {
-                  type: "string",
-                  description: "Expected correct behavior."
-                },
-                viewport: {
-                  type: "string",
-                  enum: ["desktop", "mobile", "both"],
-                  description: "Browser viewport to use."
-                },
-                credentials: {
-                  type: "object",
-                  description: "Optional test login credentials.",
-                  properties: {
-                    username: { type: "string" },
-                    password: { type: "string" }
-                  }
-                },
-                testData: {
-                  type: "object",
-                  description: "Optional structured test data."
-                }
-              }
-            }
+            body: reproInputSchema()
           }
         }
       }
@@ -166,6 +133,44 @@ function reproInputFields() {
       description: "Optional structured data for the test flow."
     }
   ];
+}
+
+function reproInputSchema() {
+  return {
+    type: "object",
+    required: ["url", "bugReport"],
+    properties: {
+      url: {
+        type: "string",
+        description: "Public website or app URL to reproduce against."
+      },
+      bugReport: {
+        type: "string",
+        description: "Required bug report, workflow, or behavior Repro should verify."
+      },
+      expectedBehavior: {
+        type: "string",
+        description: "Expected correct behavior."
+      },
+      viewport: {
+        type: "string",
+        enum: ["desktop", "mobile", "both"],
+        description: "Browser viewport to use."
+      },
+      credentials: {
+        type: "object",
+        description: "Optional test login credentials.",
+        properties: {
+          username: { type: "string" },
+          password: { type: "string" }
+        }
+      },
+      testData: {
+        type: "object",
+        description: "Optional structured test data."
+      }
+    }
+  };
 }
 
 function paymentMode() {
