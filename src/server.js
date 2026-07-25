@@ -8,7 +8,7 @@ import { initDb, createJob, getJob, listJobs, updateJob } from "./db.js";
 import { enqueueJob, queueStatus } from "./queue.js";
 import { storageStatus } from "./storage.js";
 import { processJob, startWorker } from "./worker.js";
-import { reproduceBug } from "./analyzer.js";
+import { reproduceBug, reproduceBugFast } from "./analyzer.js";
 import { ReproError } from "./errors.js";
 
 const config = getConfig();
@@ -169,7 +169,7 @@ async function createReproJob(body, { waitForReport = false } = {}) {
   if (waitForReport) {
     await updateJob(jobId, { status: "running" });
     try {
-      const report = await reproduceBug(normalized, { jobId });
+      const report = shouldUseFastPaidReport() ? await reproduceBugFast(normalized, { jobId }) : await reproduceBug(normalized, { jobId });
       await updateJob(jobId, {
         status: "completed",
         report,
@@ -231,6 +231,11 @@ function shouldWaitForReport(req) {
   if (String(req.query.async || "") === "1") return false;
   if (String(req.query.sync || "") === "1") return true;
   return false;
+}
+
+function shouldUseFastPaidReport() {
+  if ((process.env.PAYMENT_MODE || "free").toLowerCase() !== "x402") return false;
+  return process.env.REPRO_X402_FAST_REPORT !== "false";
 }
 
 function absoluteUrl(relativePath) {
