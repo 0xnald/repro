@@ -80,7 +80,8 @@ if (paymentMiddleware) {
 
 app.post("/v1/reproduce", async (req, res, next) => {
   try {
-    const job = await createReproJob(req.body, { waitForReport: shouldWaitForReport(req) });
+    const body = decodeTaskPayload(req.body);
+    const job = await createReproJob(body, { waitForReport: shouldWaitForReport(req) });
     res.status(job.status === "completed" ? 200 : 202).json(job);
   } catch (error) {
     next(error);
@@ -253,26 +254,32 @@ function serializeError(error) {
 }
 
 function decodeTaskPayload(query) {
-  if (query.body) return parseJsonQuery(query.body, "body");
-  if (query.serviceParams) return parseJsonQuery(query.serviceParams, "serviceParams");
+  const payload = unwrapTaskPayload(query);
+  if (typeof payload === "string") return payloadFromText(payload);
+
   const body = {
-    url: query.url,
-    bugReport: query.bugReport,
-    expectedBehavior: query.expectedBehavior,
-    viewport: query.viewport
+    url: payload.url || payload.websiteUrl || payload.appUrl || payload.targetUrl,
+    bugReport: payload.bugReport || payload.report || payload.issue || payload.task || payload.prompt || payload.description,
+    expectedBehavior: payload.expectedBehavior || payload.expected || payload.acceptanceCriteria,
+    viewport: payload.viewport || payload.device
   };
 
-  if (query.username || query.password) {
-    body.credentials = {
-      username: query.username,
-      password: query.password
-    };
+  const credentials = payload.credentials || payload.login || payload.auth || {};
+  const username = credentials.username || credentials.email || payload.username || payload.email;
+  const password = credentials.password || payload.password;
+  if (username || password) {
+    body.credentials = { username, password };
   }
-  if (query.testData) body.testData = parseJsonQuery(query.testData, "testData");
+
+  if (payload.testData) {
+    body.testData = typeof payload.testData === "string" ? parseJsonQuery(payload.testData, "testData") : payload.testData;
+  }
+
   return body;
 }
 
 function parseJsonQuery(value, name) {
+  if (value && typeof value === "object") return value;
   try {
     return JSON.parse(String(value));
   } catch {
@@ -283,4 +290,31 @@ function parseJsonQuery(value, name) {
     });
     throw error;
   }
+}
+
+function unwrapTaskPayload(value) {
+  if (value == null) return {};
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return {};
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) return parseJsonQuery(trimmed, "body");
+    return trimmed;
+  }
+
+  const wrappers = ["body", "serviceParams", "params", "parameters", "arguments", "input", "payload", "data"];
+  for (const key of wrappers) {
+    if (value[key] != null) return unwrapTaskPayload(value[key]);
+  }
+
+  return value;
+}
+
+function payloadFromText(text) {
+  const match = text.match(/https?:\/\/[^\s<>"')]+/i);
+  return {
+    url: match?.[0],
+    bugReport: text,
+    expectedBehavior: undefined,
+    viewport: /mobile/i.test(text) ? "mobile" : "desktop"
+  };
 }
