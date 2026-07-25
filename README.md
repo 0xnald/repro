@@ -172,10 +172,16 @@ Keep the existing API service start command as:
 pnpm start
 ```
 
-Create a second Railway service for presence, using the same repo and Dockerfile, then set its start command to:
+Create a second Railway service for presence, using the same repo and Dockerfile. It can keep the same Railway start command:
 
 ```bash
-pnpm start:presence
+pnpm start
+```
+
+Then set:
+
+```bash
+REPRO_PROCESS=presence
 ```
 
 Use `/health` as the Railway healthcheck path. The presence worker runs:
@@ -187,12 +193,13 @@ onchainos agent heartbeat --chain-index 196
 every `OKX_PRESENCE_INTERVAL_MS` milliseconds, so #8594 can stay online even when your local PC is off. Configure the same OKX credential variables used by the API service, plus:
 
 ```bash
+REPRO_PROCESS=presence
 OKX_PRESENCE_CHAIN_INDEX=196
 OKX_PRESENCE_INTERVAL_MS=120000
 ONCHAINOS_BIN=onchainos
 ```
 
-Do not change the API service to `pnpm start:presence`; the worker is only for OKX.AI presence. If the presence service healthcheck returns `503`, check Railway logs for the exact `onchainos` auth or heartbeat error and add the missing real OKX runtime value.
+Do not set `REPRO_PROCESS=presence` on the API service; the worker is only for OKX.AI presence. The presence `/health` endpoint is a liveness check and returns the latest heartbeat state in JSON. If the JSON shows `status: "error"`, check Railway logs for the exact `onchainos` auth or heartbeat error and add the missing real OKX runtime value.
 
 ## Required Real Inputs Before Launch
 

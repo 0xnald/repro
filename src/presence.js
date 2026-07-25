@@ -17,8 +17,7 @@ const state = {
 
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
-    const healthy = state.status === "ok" || state.status === "starting";
-    res.writeHead(healthy ? 200 : 503, { "content-type": "application/json" });
+    res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({
       service: "Repro OKX Presence",
       chainIndex,
