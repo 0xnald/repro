@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
+    "start:presence": "node src/presence.js",
     "start:env": "node --env-file=.env src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check src/server.js && node --check src/analyzer.js && node --check src/urlSafety.js && node --check src/report.js && node --check src/payment.js && node --check src/config.js && node --check src/openrouter.js && node --check src/guardrails.js && node --check src/db.js && node --check src/queue.js && node --check src/storage.js && node --check src/worker.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/analyzer.js && node --check src/urlSafety.js && node --check src/report.js && node --check src/payment.js && node --check src/config.js && node --check src/openrouter.js && node --check src/guardrails.js && node --check src/db.js && node --check src/queue.js && node --check src/storage.js && node --check src/worker.js && node --check src/presence.js && node --check public/app.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1092.0",

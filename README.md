@@ -162,6 +162,38 @@ The response includes `jobId`, `statusUrl`, and `reportUrl`. The dashboard polls
 
 Use Railway with the included `Dockerfile`. Repro needs Playwright browser automation, which is a better fit for a container runtime than Vercel serverless.
 
+## Keep OKX.AI Presence Online
+
+The Repro API service and the OKX.AI presence worker should run as two separate Railway services from this same repository.
+
+Keep the existing API service start command as:
+
+```bash
+pnpm start
+```
+
+Create a second Railway service for presence, using the same repo and Dockerfile, then set its start command to:
+
+```bash
+pnpm start:presence
+```
+
+Use `/health` as the Railway healthcheck path. The presence worker runs:
+
+```bash
+onchainos agent heartbeat --chain-index 196
+```
+
+every `OKX_PRESENCE_INTERVAL_MS` milliseconds, so #8594 can stay online even when your local PC is off. Configure the same OKX credential variables used by the API service, plus:
+
+```bash
+OKX_PRESENCE_CHAIN_INDEX=196
+OKX_PRESENCE_INTERVAL_MS=120000
+ONCHAINOS_BIN=onchainos
+```
+
+Do not change the API service to `pnpm start:presence`; the worker is only for OKX.AI presence. If the presence service healthcheck returns `503`, check Railway logs for the exact `onchainos` auth or heartbeat error and add the missing real OKX runtime value.
+
 ## Required Real Inputs Before Launch
 
 - Public HTTPS deployment URL
