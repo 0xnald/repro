@@ -20,7 +20,7 @@ export function createPaymentMiddleware() {
     secretKey: env.OKX_SECRET_KEY,
     passphrase: env.OKX_PASSPHRASE,
     baseUrl: process.env.OKX_FACILITATOR_URL || undefined,
-    syncSettle: process.env.OKX_SYNC_SETTLE !== "false"
+    syncSettle: true
   });
 
   const server = new x402ResourceServer(facilitator)
@@ -85,6 +85,7 @@ export function paymentStatus() {
     price: process.env.REPRO_PRICE || null,
     network: process.env.X402_NETWORK || null,
     resourceUrl: canonicalPaymentResourceUrl() || null,
+    settlement: mode === "x402" ? "sync" : null,
     payToConfigured: Boolean(process.env.PAY_TO_ADDRESS),
     facilitatorConfigured: Boolean(process.env.OKX_API_KEY && process.env.OKX_SECRET_KEY && process.env.OKX_PASSPHRASE)
   };

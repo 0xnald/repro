@@ -105,7 +105,6 @@ X402_NETWORK=eip155:196
 X402_RESOURCE_URL=https://repro-asp.up.railway.app/v1/reproduce
 X402_RESOURCE_DESCRIPTION=Repro verified bug reproduction package
 X402_MAX_TIMEOUT_SECONDS=300
-OKX_SYNC_SETTLE=true
 X402_SYNC_ON_START=true
 
 REPRO_REASONING_REQUIRED=true
