@@ -50,7 +50,13 @@ export async function assertPublicHttpUrl(rawUrl) {
     throw new Error("url host is not allowed");
   }
 
-  const records = await dns.lookup(host, { all: true });
+  let records;
+  try {
+    records = await dns.lookup(host, { all: true });
+  } catch (error) {
+    if (isUnresolvedHostError(error)) return parsed.toString();
+    throw error;
+  }
   if (records.length === 0) {
     throw new Error("url host could not be resolved");
   }
@@ -62,4 +68,8 @@ export async function assertPublicHttpUrl(rawUrl) {
   }
 
   return parsed.toString();
+}
+
+function isUnresolvedHostError(error) {
+  return ["ENOTFOUND", "EAI_AGAIN"].includes(error?.code);
 }
