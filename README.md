@@ -13,8 +13,8 @@ This repository implements a real A2MCP-friendly HTTP service for OKX.AI. It doe
 - Publishes screenshots/video artifacts to S3-compatible storage when configured.
 - Produces a structured Verified Reproduction Package.
 - Generates a developer-ready Playwright regression test from the actual browser steps performed.
-- Protects `GET /v1/reproduce` and `POST /v1/reproduce` with the official OKX x402 seller middleware when `PAYMENT_MODE=x402`.
-- Returns a fast structured `202` job acknowledgment for paid x402 calls, so OKX.AI replay clients do not time out while the real browser reproduction continues in the background.
+- Protects `GET`, `HEAD`, and `POST /v1/reproduce` with the official OKX x402 seller middleware when `PAYMENT_MODE=x402`.
+- Returns the completed Verified Reproduction Package inline for paid x402 calls, so OKX.AI replay clients receive the actual deliverable through the paid response.
 
 ## Run Locally
 
@@ -68,19 +68,23 @@ The service returns a Verified Reproduction Package:
 - `regressionTest`: generated Playwright test
 - `artifacts`: local artifact paths
 
-For paid x402 calls, long browser work is asynchronous. A valid paid replay returns:
+For paid x402 calls, Repro runs a real browser workflow and returns the completed report inline:
 
 ```json
 {
   "jobId": "uuid",
-  "status": "queued",
+  "status": "completed",
   "statusUrl": "https://repro-asp.up.railway.app/v1/jobs/uuid",
   "reportUrl": "https://repro-asp.up.railway.app/v1/reports/uuid",
-  "message": "Repro accepted the paid request and started a real browser reproduction job. Poll statusUrl until status is completed, then fetch reportUrl."
+  "report": {
+    "product": "Repro",
+    "service": "Verified Bug Reproduction",
+    "deliveryMode": "paid-x402-inline"
+  }
 }
 ```
 
-When `statusUrl` returns `completed`, `reportUrl` returns the full Verified Reproduction Package. If a job fails, `statusUrl` returns a structured `error` object instead of dropping the connection.
+The `reportUrl` also serves the completed Verified Reproduction Package. If a job fails, Repro returns a structured `error` object instead of dropping the connection.
 
 ## Production Configuration
 
@@ -91,17 +95,17 @@ Required production environment:
 ```bash
 PAYMENT_MODE=x402
 REPRO_START_WORKER=false
-REPRO_SYNC_CACHE_TTL_SECONDS=86400
+REPRO_SYNC_CACHE_TTL_SECONDS=0
 OKX_API_KEY=<from OKX Developer Portal>
 OKX_SECRET_KEY=<from OKX Developer Portal>
 OKX_PASSPHRASE=<from OKX Developer Portal>
 PAY_TO_ADDRESS=0xb6fE13c656087406a78Fb62D6d2948A5724Ac2A6
-REPRO_PRICE=$0.001
+REPRO_PRICE=$0.5
 X402_NETWORK=eip155:196
 X402_RESOURCE_URL=https://repro-asp.up.railway.app/v1/reproduce
 X402_RESOURCE_DESCRIPTION=Repro verified bug reproduction package
 X402_MAX_TIMEOUT_SECONDS=300
-OKX_SYNC_SETTLE=false
+OKX_SYNC_SETTLE=true
 X402_SYNC_ON_START=true
 
 REPRO_REASONING_REQUIRED=true

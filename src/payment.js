@@ -2,7 +2,7 @@ import {
   paymentMiddleware,
   x402ResourceServer
 } from "@okxweb3/x402-express";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core/facilitator";
+import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 
 const paymentRoutes = ["GET /v1/reproduce", "HEAD /v1/reproduce", "POST /v1/reproduce"];
@@ -20,7 +20,7 @@ export function createPaymentMiddleware() {
     secretKey: env.OKX_SECRET_KEY,
     passphrase: env.OKX_PASSPHRASE,
     baseUrl: process.env.OKX_FACILITATOR_URL || undefined,
-    syncSettle: process.env.OKX_SYNC_SETTLE === "true"
+    syncSettle: process.env.OKX_SYNC_SETTLE !== "false"
   });
 
   const server = new x402ResourceServer(facilitator)
