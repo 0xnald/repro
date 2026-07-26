@@ -78,6 +78,36 @@ export async function reproduceBugFast(rawRequest, { jobId = crypto.randomUUID()
       regressionTest: generateFastRegressionTest(request)
     });
   } catch (error) {
+    if (isNavigationFailure(error)) {
+      state.actionTrace.push({
+        type: "open",
+        status: "failed",
+        url: request.url,
+        reason: "Browser could not navigate to the submitted URL",
+        error: redact(error.message || String(error))
+      });
+      state.network.push({
+        url: request.url,
+        method: "GET",
+        failed: true,
+        errorText: navigationErrorText(error)
+      });
+      state.finalUrl = page.url?.() || request.url;
+      state.title = await page.title().catch(() => null);
+      await captureFailureScreenshot(page, state, viewportDir);
+      await context.close().catch(() => {});
+      await browser.close().catch(() => {});
+      const published = await publishArtifacts({ jobId, files: state.screenshotPaths }, config);
+      const screenshotUrls = published.filter((item) => item.path.endsWith(".png")).map((item) => item.url);
+      return buildNavigationFailurePackage({
+        request,
+        viewport: "desktop",
+        state,
+        artifactRoot,
+        screenshotUrls,
+        error
+      });
+    }
     await context.close().catch(() => {});
     await browser.close().catch(() => {});
     throw error;
@@ -201,6 +231,41 @@ async function runViewport({ request, viewport, artifactRoot, jobId, reasoner, c
       regressionTestFile: testResult.filename || "repro.spec.ts"
     };
   } catch (error) {
+    if (isNavigationFailure(error)) {
+      state.actionTrace.push({
+        type: "open",
+        status: "failed",
+        url: request.url,
+        reason: "Browser could not navigate to the submitted URL",
+        error: redact(error.message || String(error))
+      });
+      state.network.push({
+        url: request.url,
+        method: "GET",
+        failed: true,
+        errorText: navigationErrorText(error)
+      });
+      state.finalUrl = page.url?.() || request.url;
+      state.title = await page.title().catch(() => null);
+      await captureFailureScreenshot(page, state, viewportDir, config);
+      const video = page.video();
+      await context.close().catch(() => {});
+      await browser.close().catch(() => {});
+      const videoPath = video ? await video.path().catch(() => null) : null;
+      if (videoPath) state.videoPath = videoPath;
+      const published = await publishArtifacts({ jobId, files: state.screenshotPaths.concat(videoPath ? [videoPath] : []) }, config);
+      const screenshotUrls = published.filter((item) => item.path.endsWith(".png")).map((item) => item.url);
+      const videoUrl = published.find((item) => item.path === videoPath)?.url || null;
+      return buildNavigationFailurePackage({
+        request,
+        viewport: viewport.name,
+        state,
+        artifactRoot,
+        screenshotUrls,
+        videoUrl,
+        error
+      });
+    }
     await context.close().catch(() => {});
     await browser.close().catch(() => {});
     throw error;
@@ -575,6 +640,68 @@ function buildFastEvidencePackage({ request, state, artifactRoot, screenshotUrls
   };
 }
 
+function buildNavigationFailurePackage({ request, viewport, state, artifactRoot, screenshotUrls, videoUrl = null, error }) {
+  const errorText = navigationErrorText(error);
+  const failedRequests = compactEvidenceEntries(meaningfulNetworkFailures(state.network), 40);
+  const summary = `The submitted URL could not be reached by the browser: ${errorText}`;
+
+  return {
+    product: "Repro",
+    service: "Verified Bug Reproduction",
+    deliveryMode: "paid-x402-inline",
+    generatedAt: new Date().toISOString(),
+    input: {
+      url: request.url,
+      bugReport: request.bugReport,
+      expectedBehavior: request.expectedBehavior || null,
+      viewport
+    },
+    reproduced: true,
+    confidence: 0.92,
+    severity: navigationFailureSeverity(errorText),
+    summary,
+    actualBehavior: summary,
+    expectedBehavior: request.expectedBehavior || null,
+    steps: state.actionTrace.map((item) => item.reason || `${item.type} ${item.selector || item.url || ""}`.trim()),
+    actionTrace: state.actionTrace,
+    evidenceTimeline: state.actionTrace,
+    relatedBugIdeas: [],
+    githubIssue: {
+      title: "Repro verified unreachable URL failure",
+      body: [
+        `URL: ${request.url}`,
+        `Summary: ${summary}`,
+        `Navigation error: ${errorText}`
+      ].join("\n")
+    },
+    evidence: {
+      finalUrl: state.finalUrl || request.url,
+      title: state.title,
+      redirects: state.redirects,
+      consoleErrors: compactEvidenceEntries(meaningfulConsoleErrors(state.console), 40),
+      failedRequests,
+      metadata: state.metadata,
+      navigationError: {
+        message: errorText,
+        rawMessage: redact(error?.message || String(error))
+      },
+      screenshots: state.screenshotPaths,
+      screenshotUrls,
+      video: videoUrl
+    },
+    likelyCause: likelyNavigationFailureCause(errorText),
+    artifacts: {
+      artifactRoot,
+      screenshots: state.screenshotPaths,
+      screenshotUrls,
+      video: videoUrl
+    },
+    regressionTest: generateNavigationFailureRegressionTest(request),
+    regressionTestFile: "repro-navigation-failure.spec.ts",
+    disclaimer: "This report is generated from a real Playwright browser navigation attempt and contains only observed browser evidence."
+  };
+}
+
 function detectValidationEvidence(state) {
   const messages = [];
   for (const entry of state.console) {
@@ -588,6 +715,52 @@ function detectValidationEvidence(state) {
     found: messages.length > 0,
     messages: [...new Set(messages)].slice(0, 8)
   };
+}
+
+async function captureFailureScreenshot(page, state, viewportDir, config = null) {
+  const screenshotPath = path.join(viewportDir, "navigation-failure.png");
+  try {
+    await page.screenshot({ path: screenshotPath, fullPage: Boolean(config?.scan?.fullPageScreenshots) });
+    state.screenshotPaths.push(screenshotPath);
+  } catch {
+    // Some browser-level navigation failures leave no renderable page. The network evidence still carries the failure.
+  }
+}
+
+function isNavigationFailure(error) {
+  const text = navigationErrorText(error);
+  return /ENOTFOUND|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_CERT|ERR_SSL|ERR_TIMED_OUT|ERR_ADDRESS_UNREACHABLE|ERR_INTERNET_DISCONNECTED|net::|Timeout/i.test(text);
+}
+
+function navigationErrorText(error) {
+  return redact(error?.message || String(error || "Navigation failed"));
+}
+
+function navigationFailureSeverity(errorText) {
+  if (/ENOTFOUND|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_ADDRESS_UNREACHABLE|ERR_INTERNET_DISCONNECTED/i.test(errorText)) return "high";
+  if (/ERR_CERT|ERR_SSL/i.test(errorText)) return "high";
+  if (/Timeout|ERR_TIMED_OUT/i.test(errorText)) return "medium";
+  return "medium";
+}
+
+function likelyNavigationFailureCause(errorText) {
+  if (/ENOTFOUND|ERR_NAME_NOT_RESOLVED/i.test(errorText)) return "DNS resolution failed for the submitted hostname.";
+  if (/ERR_CERT|ERR_SSL/i.test(errorText)) return "TLS/certificate validation failed before the page could load.";
+  if (/Timeout|ERR_TIMED_OUT/i.test(errorText)) return "The target did not complete navigation within the configured browser timeout.";
+  if (/ERR_CONNECTION|ERR_ADDRESS_UNREACHABLE|ERR_INTERNET_DISCONNECTED/i.test(errorText)) return "The browser could not establish a network connection to the target.";
+  return "The browser failed before a stable page could be loaded.";
+}
+
+function generateNavigationFailureRegressionTest(request) {
+  return `import { test, expect } from '@playwright/test';
+
+test('submitted URL remains reachable', async ({ page }) => {
+  const responsePromise = page.goto(${JSON.stringify(request.url)}, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000
+  });
+  await expect(responsePromise).resolves.not.toThrow();
+});`;
 }
 
 function generateFastRegressionTest(request) {

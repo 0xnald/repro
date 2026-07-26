@@ -79,6 +79,10 @@ app.get("/v1/reports/:id", async (req, res, next) => {
   }
 });
 
+app.options("/v1/reproduce", (_, res) => {
+  res.status(204).end();
+});
+
 const paymentMiddleware = createPaymentMiddleware();
 if (paymentMiddleware) {
   app.use(paymentMiddleware);
