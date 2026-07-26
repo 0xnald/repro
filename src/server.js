@@ -109,6 +109,12 @@ app.use((_, res) => {
 });
 
 app.use((error, _, res, __) => {
+  if (isJsonParseError(error)) {
+    return res.status(400).json({
+      error: "Invalid JSON body",
+      code: "bad_request"
+    });
+  }
   if (error instanceof ReproError) {
     return res.status(error.status).json({
       error: error.message,
@@ -252,6 +258,10 @@ function absoluteUrl(relativePath) {
 
 function isReproApiRoute(pathname) {
   return pathname === "/v1/reproduce" || pathname.startsWith("/v1/jobs/") || pathname.startsWith("/v1/reports/");
+}
+
+function isJsonParseError(error) {
+  return error instanceof SyntaxError && error.status === 400 && "body" in error;
 }
 
 function serializeError(error) {
