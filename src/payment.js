@@ -5,7 +5,7 @@ import {
 import { OKXFacilitatorClient } from "@okxweb3/x402-core/facilitator";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 
-const paymentRoutes = ["GET /v1/reproduce", "POST /v1/reproduce"];
+const paymentRoutes = ["GET /v1/reproduce", "HEAD /v1/reproduce", "POST /v1/reproduce"];
 
 export function createPaymentMiddleware() {
   const mode = paymentMode();
