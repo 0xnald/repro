@@ -23,9 +23,15 @@ await initDb(config);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(publicDir));
 app.use("/artifacts", express.static(artifactDir));
-app.use((_, res, next) => {
+app.use((req, res, next) => {
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("access-control-allow-headers", "content-type, payment, payment-signature, x-payment");
+  if (isReproApiRoute(req.path)) {
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("pragma", "no-cache");
+    res.setHeader("expires", "0");
+    res.setHeader("surrogate-control", "no-store");
+  }
   next();
 });
 
@@ -242,6 +248,10 @@ function absoluteUrl(relativePath) {
   const base = String(config.app.publicBaseUrl || "").trim();
   const normalizedBase = /^https?:\/\//i.test(base) ? base : `https://${base}`;
   return new URL(relativePath, normalizedBase.endsWith("/") ? normalizedBase : `${normalizedBase}/`).toString();
+}
+
+function isReproApiRoute(pathname) {
+  return pathname === "/v1/reproduce" || pathname.startsWith("/v1/jobs/") || pathname.startsWith("/v1/reports/");
 }
 
 function serializeError(error) {

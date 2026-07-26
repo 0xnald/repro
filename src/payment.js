@@ -26,6 +26,7 @@ export function createPaymentMiddleware() {
   const server = new x402ResourceServer(facilitator)
     .register(env.X402_NETWORK, new ExactEvmScheme());
 
+  const resourceUrl = canonicalHttpUrl(env.X402_RESOURCE_URL);
   const routes = Object.fromEntries(paymentRoutes.map((route) => [
     route,
     {
@@ -38,7 +39,7 @@ export function createPaymentMiddleware() {
       }],
       description: `${env.X402_RESOURCE_DESCRIPTION}. Required JSON fields: url, bugReport.`,
       mimeType: "application/json",
-      resource: env.X402_RESOURCE_URL,
+      resource: resourceUrl,
       unpaidResponseBody: () => ({
         contentType: "application/json",
         body: {
@@ -83,9 +84,14 @@ export function paymentStatus() {
     route: paymentRoutes.join(", "),
     price: process.env.REPRO_PRICE || null,
     network: process.env.X402_NETWORK || null,
+    resourceUrl: canonicalPaymentResourceUrl() || null,
     payToConfigured: Boolean(process.env.PAY_TO_ADDRESS),
     facilitatorConfigured: Boolean(process.env.OKX_API_KEY && process.env.OKX_SECRET_KEY && process.env.OKX_PASSPHRASE)
   };
+}
+
+export function canonicalPaymentResourceUrl() {
+  return canonicalHttpUrl(process.env.X402_RESOURCE_URL || "");
 }
 
 function reproInputFields() {
@@ -175,6 +181,12 @@ function reproInputSchema() {
 
 function paymentMode() {
   return (process.env.PAYMENT_MODE || "free").toLowerCase();
+}
+
+function canonicalHttpUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return trimmed;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
 function requiredPaymentEnv() {
