@@ -578,6 +578,8 @@ function buildFastEvidencePackage({ request, state, artifactRoot, screenshotUrls
   const validationEvidence = detectValidationEvidence(state);
   const reproduced = consoleErrors.length > 0 || failedRequests.length > 0 || validationEvidence.found;
   const expectedWasEnforced = validationEvidence.found && /required|missing|empty|cannot be completed|prevent/i.test(`${request.bugReport} ${request.expectedBehavior || ""}`);
+  const healthyPage = !validationEvidence.found && consoleErrors.length === 0 && failedRequests.length === 0;
+  const healthySummary = buildHealthyPageSummary({ request, state });
 
   return {
     product: "Repro",
@@ -595,10 +597,14 @@ function buildFastEvidencePackage({ request, state, artifactRoot, screenshotUrls
     severity: expectedWasEnforced ? "low" : failedRequests.length || consoleErrors.length ? "medium" : "low",
     summary: expectedWasEnforced
       ? "The checkout flow blocked submission with missing customer information and displayed validation evidence."
-      : "Repro completed a real browser run and captured available evidence for the submitted workflow.",
+      : healthyPage
+        ? healthySummary
+        : "Repro completed a real browser run and captured console, network, and page evidence for the submitted workflow.",
     actualBehavior: validationEvidence.found
       ? `Observed validation message(s): ${validationEvidence.messages.join(" | ")}`
-      : "No explicit validation message was extracted from visible page text during the fast paid run.",
+      : healthyPage
+        ? healthySummary
+        : "No visible validation message was extracted; review the captured console, network, and screenshot evidence for observed behavior.",
     expectedBehavior: request.expectedBehavior || null,
     steps: state.actionTrace.map((item) => item.reason || `${item.type} ${item.selector || item.url || ""}`.trim()),
     actionTrace: state.actionTrace,
@@ -608,7 +614,7 @@ function buildFastEvidencePackage({ request, state, artifactRoot, screenshotUrls
       title: "Repro verified browser evidence",
       body: [
         `URL: ${request.url}`,
-        `Summary: ${validationEvidence.found ? "Validation evidence observed." : "Browser evidence captured."}`,
+        `Summary: ${validationEvidence.found ? "Validation evidence observed." : healthyPage ? healthySummary : "Browser evidence captured."}`,
         `Console errors: ${consoleErrors.length}`,
         `Failed requests: ${failedRequests.length}`
       ].join("\n")
@@ -700,6 +706,12 @@ function buildNavigationFailurePackage({ request, viewport, state, artifactRoot,
     regressionTestFile: "repro-navigation-failure.spec.ts",
     disclaimer: "This report is generated from a real Playwright browser navigation attempt and contains only observed browser evidence."
   };
+}
+
+function buildHealthyPageSummary({ request, state }) {
+  const finalUrl = state.finalUrl || request.url;
+  const title = state.title ? `, title was "${state.title}"` : "";
+  return `The page loaded successfully at ${finalUrl}${title}, with 0 console errors and 0 failed network requests observed.`;
 }
 
 function detectValidationEvidence(state) {
