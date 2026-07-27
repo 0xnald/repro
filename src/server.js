@@ -83,12 +83,30 @@ app.options("/mcp", (_, res) => {
   res.status(204).end();
 });
 
+app.get("/mcp", (_, res) => {
+  res.json({
+    product: "Repro",
+    service: "Verified Bug Reproduction",
+    transport: "mcp-http",
+    endpoint: absoluteUrl("/mcp"),
+    tools: [reproMcpToolDefinition()],
+    payment: {
+      stage: "tools/call",
+      note: "MCP initialize and tools/list are free. x402 is required only when calling reproduce_bug."
+    }
+  });
+});
+
 app.options("/v1/reproduce", (_, res) => {
   res.status(204).end();
 });
 
 app.post("/mcp", (req, res, next) => {
   if (req.body?.method === "tools/call") {
+    const toolName = req.body?.params?.name;
+    if (toolName !== "reproduce_bug") {
+      return res.json(mcpError(req.body?.id ?? null, -32602, `Unknown tool: ${toolName || "missing"}`));
+    }
     req.url = "/mcp/call";
     return next();
   }
@@ -393,6 +411,9 @@ function handleMcpLifecycle(req, res) {
   if (Array.isArray(message)) {
     return res.json(message.map((item) => handleSingleMcpLifecycle(item)));
   }
+  if (message?.method === "notifications/initialized" && message.id == null) {
+    return res.status(204).end();
+  }
   return res.json(handleSingleMcpLifecycle(message));
 }
 
@@ -427,11 +448,7 @@ function handleSingleMcpLifecycle(message) {
       jsonrpc: "2.0",
       id: message.id ?? null,
       result: {
-        tools: [{
-          name: "reproduce_bug",
-          description: "Reproduce a real website or app bug with browser evidence, screenshots, logs, likely cause, severity, and a Playwright regression test.",
-          inputSchema: reproMcpInputSchema()
-        }]
+        tools: [reproMcpToolDefinition()]
       }
     };
   }
@@ -447,6 +464,14 @@ function mcpError(id, code, message) {
       code,
       message
     }
+  };
+}
+
+function reproMcpToolDefinition() {
+  return {
+    name: "reproduce_bug",
+    description: "Reproduce a real website or app bug with browser evidence, screenshots, logs, likely cause, severity, and a Playwright regression test.",
+    inputSchema: reproMcpInputSchema()
   };
 }
 
