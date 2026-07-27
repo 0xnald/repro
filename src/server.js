@@ -79,14 +79,52 @@ app.get("/v1/reports/:id", async (req, res, next) => {
   }
 });
 
+app.options("/mcp", (_, res) => {
+  res.status(204).end();
+});
+
 app.options("/v1/reproduce", (_, res) => {
   res.status(204).end();
+});
+
+app.post("/mcp", (req, res, next) => {
+  if (req.body?.method === "tools/call") {
+    req.url = "/mcp/call";
+    return next();
+  }
+  return handleMcpLifecycle(req, res);
 });
 
 const paymentMiddleware = createPaymentMiddleware();
 if (paymentMiddleware) {
   app.use(paymentMiddleware);
 }
+
+app.post("/mcp/call", async (req, res, next) => {
+  try {
+    const call = req.body || {};
+    const params = call.params || {};
+    if (params.name !== "reproduce_bug") {
+      return res.json(mcpError(call.id, -32602, `Unknown tool: ${params.name || "missing"}`));
+    }
+    const body = decodeTaskPayload(params.arguments || params.input || {});
+    const job = await createReproJob(body, { waitForReport: true });
+    res.json({
+      jsonrpc: "2.0",
+      id: call.id ?? null,
+      result: {
+        content: [{
+          type: "text",
+          text: JSON.stringify(job, null, 2)
+        }],
+        structuredContent: job,
+        isError: false
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.post("/v1/reproduce", async (req, res, next) => {
   try {
@@ -261,7 +299,7 @@ function absoluteUrl(relativePath) {
 }
 
 function isReproApiRoute(pathname) {
-  return pathname === "/v1/reproduce" || pathname.startsWith("/v1/jobs/") || pathname.startsWith("/v1/reports/");
+  return pathname === "/v1/reproduce" || pathname === "/mcp" || pathname === "/mcp/call" || pathname.startsWith("/v1/jobs/") || pathname.startsWith("/v1/reports/");
 }
 
 function isJsonParseError(error) {
@@ -347,5 +385,105 @@ function payloadFromText(text) {
     bugReport: text,
     expectedBehavior: undefined,
     viewport: /mobile/i.test(text) ? "mobile" : "desktop"
+  };
+}
+
+function handleMcpLifecycle(req, res) {
+  const message = req.body || {};
+  if (Array.isArray(message)) {
+    return res.json(message.map((item) => handleSingleMcpLifecycle(item)));
+  }
+  return res.json(handleSingleMcpLifecycle(message));
+}
+
+function handleSingleMcpLifecycle(message) {
+  if (message?.method === "initialize") {
+    return {
+      jsonrpc: "2.0",
+      id: message.id ?? null,
+      result: {
+        protocolVersion: message.params?.protocolVersion || "2024-11-05",
+        capabilities: {
+          tools: {}
+        },
+        serverInfo: {
+          name: "Repro",
+          version: "0.1.0"
+        }
+      }
+    };
+  }
+
+  if (message?.method === "notifications/initialized") {
+    return {
+      jsonrpc: "2.0",
+      id: message.id ?? null,
+      result: {}
+    };
+  }
+
+  if (message?.method === "tools/list") {
+    return {
+      jsonrpc: "2.0",
+      id: message.id ?? null,
+      result: {
+        tools: [{
+          name: "reproduce_bug",
+          description: "Reproduce a real website or app bug with browser evidence, screenshots, logs, likely cause, severity, and a Playwright regression test.",
+          inputSchema: reproMcpInputSchema()
+        }]
+      }
+    };
+  }
+
+  return mcpError(message?.id ?? null, -32601, `Unsupported MCP method: ${message?.method || "missing"}`);
+}
+
+function mcpError(id, code, message) {
+  return {
+    jsonrpc: "2.0",
+    id: id ?? null,
+    error: {
+      code,
+      message
+    }
+  };
+}
+
+function reproMcpInputSchema() {
+  return {
+    type: "object",
+    required: ["url", "bugReport"],
+    properties: {
+      url: {
+        type: "string",
+        description: "Public website or app URL to reproduce against."
+      },
+      bugReport: {
+        type: "string",
+        description: "Bug report, workflow, or behavior Repro should verify."
+      },
+      expectedBehavior: {
+        type: "string",
+        description: "Expected correct behavior."
+      },
+      viewport: {
+        type: "string",
+        enum: ["desktop", "mobile", "both"],
+        description: "Browser viewport to use."
+      },
+      credentials: {
+        type: "object",
+        description: "Optional test login credentials.",
+        properties: {
+          username: { type: "string" },
+          password: { type: "string" }
+        }
+      },
+      testData: {
+        type: "object",
+        description: "Optional structured test data."
+      }
+    }
   };
 }

@@ -5,7 +5,12 @@ import {
 import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 
-const paymentRoutes = ["GET /v1/reproduce", "HEAD /v1/reproduce", "POST /v1/reproduce"];
+const paymentRoutes = [
+  { route: "GET /v1/reproduce", resource: () => canonicalPaymentResourceUrl() },
+  { route: "HEAD /v1/reproduce", resource: () => canonicalPaymentResourceUrl() },
+  { route: "POST /v1/reproduce", resource: () => canonicalPaymentResourceUrl() },
+  { route: "POST /mcp/call", resource: () => canonicalMcpResourceUrl() }
+];
 
 export function createPaymentMiddleware() {
   const mode = paymentMode();
@@ -26,8 +31,7 @@ export function createPaymentMiddleware() {
   const server = new x402ResourceServer(facilitator)
     .register(env.X402_NETWORK, new ExactEvmScheme());
 
-  const resourceUrl = canonicalHttpUrl(env.X402_RESOURCE_URL);
-  const routes = Object.fromEntries(paymentRoutes.map((route) => [
+  const routes = Object.fromEntries(paymentRoutes.map(({ route, resource }) => [
     route,
     {
       accepts: [{
@@ -39,7 +43,7 @@ export function createPaymentMiddleware() {
       }],
       description: `${env.X402_RESOURCE_DESCRIPTION}. Required JSON fields: url, bugReport.`,
       mimeType: "application/json",
-      resource: resourceUrl,
+      resource: resource(),
       unpaidResponseBody: () => ({
         contentType: "application/json",
         body: {
@@ -81,10 +85,11 @@ export function paymentStatus() {
   const mode = paymentMode();
   return {
     mode,
-    route: paymentRoutes.join(", "),
+    route: paymentRoutes.map((item) => item.route).join(", "),
     price: process.env.REPRO_PRICE || null,
     network: process.env.X402_NETWORK || null,
     resourceUrl: canonicalPaymentResourceUrl() || null,
+    mcpResourceUrl: canonicalMcpResourceUrl() || null,
     settlement: mode === "x402" ? "sync" : null,
     payToConfigured: Boolean(process.env.PAY_TO_ADDRESS),
     facilitatorConfigured: Boolean(process.env.OKX_API_KEY && process.env.OKX_SECRET_KEY && process.env.OKX_PASSPHRASE)
@@ -93,6 +98,15 @@ export function paymentStatus() {
 
 export function canonicalPaymentResourceUrl() {
   return canonicalHttpUrl(process.env.X402_RESOURCE_URL || "");
+}
+
+export function canonicalMcpResourceUrl() {
+  const configured = process.env.MCP_RESOURCE_URL || process.env.REPRO_MCP_URL;
+  if (configured) return canonicalHttpUrl(configured);
+  const base = process.env.PUBLIC_BASE_URL || process.env.OPENROUTER_SITE_URL || "";
+  if (!base) return canonicalPaymentResourceUrl().replace(/\/v1\/reproduce\/?$/i, "/mcp");
+  const normalizedBase = canonicalHttpUrl(base).replace(/\/$/, "");
+  return `${normalizedBase}/mcp`;
 }
 
 function reproInputFields() {

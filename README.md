@@ -13,7 +13,8 @@ This repository implements a real A2MCP-friendly HTTP service for OKX.AI. It doe
 - Publishes screenshots/video artifacts to S3-compatible storage when configured.
 - Produces a structured Verified Reproduction Package.
 - Generates a developer-ready Playwright regression test from the actual browser steps performed.
-- Protects `GET`, `HEAD`, and `POST /v1/reproduce` with the official OKX x402 seller middleware when `PAYMENT_MODE=x402`.
+- Exposes `/mcp` for OKX.AI A2MCP. MCP lifecycle methods such as `initialize` and `tools/list` are free; only `tools/call` is routed through the official OKX x402 seller middleware.
+- Keeps `GET`, `HEAD`, and `POST /v1/reproduce` as the direct paid API route for diagnostics and direct x402 callers.
 - Returns the completed Verified Reproduction Package inline for paid x402 calls, so OKX.AI replay clients receive the actual deliverable through the paid response.
 
 ## Run Locally
@@ -103,6 +104,7 @@ PAY_TO_ADDRESS=0xb6fE13c656087406a78Fb62D6d2948A5724Ac2A6
 REPRO_PRICE=$0.5
 X402_NETWORK=eip155:196
 X402_RESOURCE_URL=https://repro-asp.up.railway.app/v1/reproduce
+MCP_RESOURCE_URL=https://repro-asp.up.railway.app/mcp
 X402_RESOURCE_DESCRIPTION=Repro verified bug reproduction package
 X402_MAX_TIMEOUT_SECONDS=300
 X402_SYNC_ON_START=true
